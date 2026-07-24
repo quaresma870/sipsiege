@@ -16,12 +16,7 @@ runs. No scope file, no scan — no `--force` to get around it.
 
 ## Why this exists
 
-Built after the 19 July 2026 incident: an internet-exposed SIP port took a
-sustained REGISTER flood from `191.96.227.156`, which cascaded into SBC CPU
-exhaustion and a `430 Flow Failed` storm on Kamailio. This toolkit lets you
-reproduce that pattern — and a few others — against a **test** instance to
-confirm `pike`/`htable` actually catch it before you rely on that in
-production.
+Prevent and test targeted real attacks.
 
 ## Installation
 
