@@ -10,12 +10,21 @@ that actually starts dropping a flooding source) without depending on
 a real Kamailio instance being available in CI.
 
 Behavior:
-  - Responds "200 OK" to any REGISTER from a source IP that has sent
-    <= `threshold` requests in the trailing `window` seconds.
+  - Responds "200 OK" to any REGISTER or INVITE from a source IP that
+    has sent <= `threshold` requests (REGISTER and INVITE share one
+    counter, same as a real per-IP pike threshold would) in the
+    trailing `window` seconds. An allowed INVITE gets a To-tag and a
+    minimal SDP answer, since it needs to look like a real
+    dialog-establishing response for invite_flood's ACK/BYE to make
+    sense.
   - Silently drops (no response) once that source exceeds the
     threshold - mimicking the observable effect of pike blocking
     (the client sees no reply / a timeout), which is exactly what
-    SIPSiege's baseline_probe scenario is designed to detect.
+    SIPSiege's baseline_probe/invite_flood scenarios are designed to
+    detect.
+  - BYE always gets a plain 200 OK, unconditionally, uncounted against
+    the limiter - tearing down a call you already let through isn't
+    the thing being rate-limited. ACK gets no response, as normal.
   - A blocked source recovers once enough time passes that its
     request count within the trailing window drops back under
     threshold.
@@ -27,6 +36,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import random
 import re
 import socket
 import time
@@ -64,6 +74,48 @@ def build_200_ok(request: bytes) -> bytes:
     return b"\r\n".join(lines)
 
 
+def build_invite_200_ok(request: bytes) -> bytes:
+    """Like build_200_ok, but adds a To-tag (this is the UAS establishing
+    a new dialog) and a minimal SDP answer, so a real ACK/BYE flow makes
+    sense on top of it - unlike REGISTER's 200, this response has to hold
+    up as the start of an actual dialog, not just an accepted request."""
+
+    def _find(pattern):
+        m = pattern.search(request)
+        return m.group(1).strip() if m else b""
+
+    via = _find(VIA_RE)
+    frm = _find(FROM_RE)
+    to = _find(TO_RE)
+    call_id = _find(CALLID_RE)
+    cseq = _find(CSEQ_RE)
+
+    to_tag = f"mocksbc{random.randint(100000, 999999)}".encode()
+    to_with_tag = to + b";tag=" + to_tag
+
+    sdp_body = (
+        b"v=0\r\n"
+        b"o=mocksbc 0 0 IN IP4 127.0.0.1\r\n"
+        b"s=-\r\n"
+        b"c=IN IP4 127.0.0.1\r\n"
+        b"t=0 0\r\n"
+        b"m=audio 40000 RTP/AVP 0\r\n"
+        b"a=rtpmap:0 PCMU/8000\r\n"
+    )
+
+    header_lines = [
+        b"SIP/2.0 200 OK",
+        b"Via: " + via,
+        b"From: " + frm,
+        b"To: " + to_with_tag,
+        b"Call-ID: " + call_id,
+        b"CSeq: " + cseq,
+        b"Content-Type: application/sdp",
+        b"Content-Length: " + str(len(sdp_body)).encode(),
+    ]
+    return b"\r\n".join(header_lines) + b"\r\n\r\n" + sdp_body
+
+
 class SlidingWindowLimiter:
     def __init__(self, threshold: int, window_seconds: float):
         self.threshold = threshold
@@ -95,20 +147,31 @@ def serve(host: str, port: int, threshold: int, window: float, log_path: str | N
         while True:
             data, addr = sock.recvfrom(65535)
             source_ip = addr[0]
-            if data.startswith(b"REGISTER"):
+            method = data.split(b" ", 1)[0]
+
+            if method in (b"REGISTER", b"INVITE"):
                 ok = limiter.allow(source_ip)  # call exactly once - it mutates state
                 if ok:
-                    resp = build_200_ok(data)
+                    resp = build_invite_200_ok(data) if method == b"INVITE" else build_200_ok(data)
                     sock.sendto(resp, addr)
                     allowed_count += 1
                 else:
                     dropped_count += 1  # simulate pike-style silent drop
                 if logf:
                     logf.write(
-                        f"{time.time()} {source_ip} {'ALLOWED' if ok else 'DROPPED'} "
+                        f"{time.time()} {source_ip} {method.decode()} "
+                        f"{'ALLOWED' if ok else 'DROPPED'} "
                         f"allowed_total={allowed_count} dropped_total={dropped_count}\n"
                     )
                     logf.flush()
+            elif method == b"BYE":
+                # Tearing down a call that already got through isn't
+                # what's being rate-limited here - always ack it.
+                sock.sendto(build_200_ok(data), addr)
+                if logf:
+                    logf.write(f"{time.time()} {source_ip} BYE\n")
+                    logf.flush()
+            # ACK and anything else: no response expected, ignore.
     except KeyboardInterrupt:
         pass
     finally:

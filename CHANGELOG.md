@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 Repo consistency pass to match the rest of the portfolio
 ([redteam-toolkit](https://github.com/quaresma870/redteam-toolkit),
@@ -28,6 +28,26 @@ Repo consistency pass to match the rest of the portfolio
   being out of `scope.targets` instead. The test now populates
   `excluded_targets` itself before asserting exclusion refusal, the
   same way a real user would.
+- Removed the last references to the specific real incident this
+  toolkit was originally built after, from `register_flood.xml` and
+  `register_flood.py`'s docstrings, and moved the test-fixture
+  "excluded/production-style" address from a private-range IP
+  (`172.21.0.57`) to an RFC 5737 documentation address (`192.0.2.57`)
+  across all of `tests/unit/` and the integration test — a private-range
+  address used consistently as a fixture could plausibly be read as a
+  real internal one; a documentation-range address can't be.
+- Added `invite_flood` (see [ROADMAP.md](ROADMAP.md) item 1): a
+  call-setup flood, distinct from REGISTER-volume flooding because a
+  completed or even just-attempted INVITE transaction makes the target
+  allocate transaction/dialog state a REGISTER never does. Each call
+  completes cleanly (INVITE → 200 → ACK → immediate BYE) so the only
+  variable under test is call-setup rate — a scenario that deliberately
+  leaves calls half-open instead (dialog exhaustion) is intentionally a
+  separate future item, not this one. `tests/fixtures/mock_sbc.py` now
+  answers INVITE (with a To-tag and minimal SDP, sharing the same
+  per-IP rate limiter as REGISTER) and BYE (always accepted,
+  unconditionally), so the integration test exercises a real, complete
+  INVITE/ACK/BYE cycle end-to-end rather than mocking it.
 
 ## 0.1.0
 

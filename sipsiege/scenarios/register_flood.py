@@ -3,7 +3,7 @@ scenarios/register_flood.py
 
 The scenario from the first pass of this toolkit: single real
 source, high rate, rotating spoofed From/To/Contact identity per
-request. Reproduces the 19 July 2026 incident pattern.
+request. Reproduces the classic single-source REGISTER flood pattern.
 
 Tier: active - requires --confirm <engagement_id>.
 """

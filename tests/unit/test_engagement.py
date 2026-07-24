@@ -16,7 +16,7 @@ def test_refuses_excluded_target(tmp_path, write_auth):
     auth_path = write_auth(tmp_path)
     eng = Engagement(auth_path)
     with pytest.raises(EngagementRefused, match="exclusion"):
-        eng.gate(action="scenario:baseline_probe", target="172.21.0.57", tier="baseline")
+        eng.gate(action="scenario:baseline_probe", target="192.0.2.57", tier="baseline")
 
 
 def test_refuses_out_of_scope_target(tmp_path, write_auth):
