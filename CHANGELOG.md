@@ -21,6 +21,13 @@ Repo consistency pass to match the rest of the portfolio
   to add your own known production infrastructure before your first
   real run. Avoids baking real internal topology into a public repo's
   git history.
+- Fixed `tests/integration/run_integration_test.sh`, which the
+  `excluded_targets`-ships-empty change above broke: step 8 expected
+  `172.21.0.57` to already be excluded and asserted the refusal
+  mentioned an exclusion, but with an empty default it was refused for
+  being out of `scope.targets` instead. The test now populates
+  `excluded_targets` itself before asserting exclusion refusal, the
+  same way a real user would.
 
 ## 0.1.0
 
