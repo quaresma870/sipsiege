@@ -1,11 +1,8 @@
 # SIPSiege
 
 A small, purpose-built toolkit for validating Kamailio/SBC flood defenses
-(`pike`, `htable`, rate limiting) against multiple real attack patterns —
-structured on the same safety scaffolding as
-[quaresma870/redteam-toolkit](https://github.com/quaresma870/redteam-toolkit)
-and the sibling [voipaudit](https://github.com/quaresma870/voipaudit) repo:
-mandatory scope enforcement via a signed `authorization.yml`, tamper-evident
+(`pike`, `htable`, rate limiting) against multiple real attack patterns.
+Mandatory scope enforcement via a signed `authorization.yml`, tamper-evident
 audit logging, and an explicit confirmation gate before anything disruptive
 runs. No scope file, no scan — no `--force` to get around it.
 
