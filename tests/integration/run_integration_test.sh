@@ -62,6 +62,13 @@ content = content.replace(
 content = content.replace(
     'authorized_contact_email: "CHANGE ME"', 'authorized_contact_email: "ci@test.local"'
 )
+# excluded_targets ships empty by default (see cli.py's TEMPLATE) - add
+# one here explicitly so step 8 below can exercise real exclusion
+# refusal, the same way a user would populate their own production
+# infrastructure before a real run.
+content = content.replace(
+    'excluded_targets: []', 'excluded_targets: ["172.21.0.57"]'
+)
 open("authorization.yml", "w").write(content)
 PYEOF
 ENGAGEMENT_ID=$(grep '^engagement_id:' authorization.yml | head -1 | sed -E 's/engagement_id: "(.*)"/\1/')
