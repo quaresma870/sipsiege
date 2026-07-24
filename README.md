@@ -68,7 +68,9 @@ PYTHONPATH=. python -m sipsiege.cli baseline 10.10.10.50
 | `register_rotating_source` | active | Concurrent flood from multiple *real* local source IPs — tests whether a per-IP threshold like `pike`'s is enough, or whether you need an aggregate limit too. Requires `--local-ips`. |
 | `register_legit_mix` | active | Flood + a low-rate legitimate stream running concurrently — checks whether real endpoints get collaterally blocked. Requires `--attacker-ip` and `--legit-ip`. |
 
-Run `list-scenarios` for the same info from the CLI.
+Run `list-scenarios` for the same info from the CLI. See
+[ROADMAP.md](ROADMAP.md) for what's planned next — INVITE floods, digest
+auth brute-force, and other attack patterns beyond REGISTER.
 
 ### register_rotating_source and register_legit_mix need extra local IPs
 
