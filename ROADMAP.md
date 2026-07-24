@@ -24,33 +24,37 @@ before picking any of these up.
   per call; each call completes cleanly (INVITE → 200 → ACK → immediate
   BYE) so the only variable under test is call-setup rate — a scenario
   that deliberately leaves calls half-open instead is intentionally a
-  separate item (see `invite_no_ack` below), not this one.
+  separate item (see v0.3.0 below), not this one.
   `tests/fixtures/mock_sbc.py` now answers INVITE (To-tag + minimal SDP,
   sharing REGISTER's per-IP limiter) and BYE (always accepted,
   unconditionally), so the integration test exercises a real, complete
   INVITE/ACK/BYE cycle rather than mocking it.
 
+### v0.3.0
+- `invite_no_ack` — half-open call / dialog exhaustion. Identical INVITE
+  traffic to `invite_flood`, but every answered call is deliberately left
+  half-open — no ACK, no BYE, ever. Each half-open dialog consumes the
+  target's session-table memory (and, realistically, its 200
+  retransmission timer) for the duration of its own retransmission/
+  timeout window — a comparatively small request rate can still exhaust
+  dialog capacity if calls are left open long enough, a meaningfully
+  different failure mode from a raw per-second rate trip. Tests whether
+  dialog/session limits are configured at all, not just request-rate
+  limiting. Turned out to need no `-recv_timeout` tuning or `mock_sbc.py`
+  changes — the half-open behavior is entirely a client-side omission (no
+  `<send>` after the mandatory `200` recv), and the existing
+  unconditional `-recv_timeout 2000` already means SIPp only hangs
+  waiting on things it's actually told to wait for.
+
 ## Next — attack scenario coverage
 
-REGISTER and INVITE flooding are two real patterns among several. The
-items below are each grounded in a documented, commonly-seen SIP/VoIP
-attack technique — prioritized by how often they show up against real
-internet-facing SBCs, not by implementation difficulty.
+REGISTER and INVITE flooding (clean and half-open) are the patterns
+covered so far. The items below are each grounded in a documented,
+commonly-seen SIP/VoIP attack technique — prioritized by how often they
+show up against real internet-facing SBCs, not by implementation
+difficulty.
 
-### 1. `invite_no_ack` — half-open call / dialog exhaustion (highest priority)
-A real, specifically damaging variant of #1: send INVITE, receive
-180/200, and deliberately never send ACK (or send it and never BYE).
-Each half-open dialog consumes SBC session-table memory for the duration
-of its retransmission/timeout window — a small request rate can still
-exhaust dialog capacity if dialogs are left open long enough, which is a
-meaningfully different failure mode from a raw per-second rate trip and
-tests whether Kamailio's dialog module / max-dialog limits are configured
-at all, not just `pike`. Tier: active. Needs: `-recv_timeout` tuning so
-SIPp doesn't itself hang waiting on an ACK it's told not to send — same
-class of problem already solved once for `baseline_probe` in
-`core/sipp_runner.py`, worth reusing that lesson here.
-
-### 2. `digest_bruteforce` — credential stuffing against REGISTER auth
+### 1. `digest_bruteforce` — credential stuffing against REGISTER auth (highest priority)
 The single most common real-world VoIP attack is not flooding, it's
 credential stuffing against SIP digest auth to hijack a trunk for toll
 fraud — attackers cycle short numeric extensions (1000-9999) against
@@ -65,8 +69,8 @@ inline `[authentication]` in the XML) and a wordlist-driving loop over
 extension/password pairs — this is the first scenario that needs
 per-attempt credential variation rather than just identity rotation.
 
-### 3. `user_enum` — extension/account enumeration (recon tier)
-Precedes #2 in a real attack chain: probing REGISTER or OPTIONS against a
+### 2. `user_enum` — extension/account enumeration (recon tier)
+Precedes #1 in a real attack chain: probing REGISTER or OPTIONS against a
 range of extensions and diffing the response (401 = valid account exists,
 404 = doesn't) to build a target list before brute-forcing it — the same
 technique tools like `svwar` use. Low volume, not disruptive, so this
@@ -74,9 +78,9 @@ belongs at `baseline` tier like `baseline_probe`, not `active` — it's
 recon, not load. Valuable on its own merit (confirms whether Kamailio
 returns a uniform response regardless of account existence, which is the
 actual defense against this) and as the natural companion/precondition to
-#2. Good candidate to ship together with #2.
+#1. Good candidate to ship together with #1.
 
-### 4. `rotating_source`, scaled realistically
+### 3. `rotating_source`, scaled realistically
 The existing `register_rotating_source` is correct in design (real bound
 local IPs, no source-IP spoofing — see guardrails below) but is currently
 bottlenecked at "however many IPs you're willing to `ip addr add` by
@@ -88,7 +92,7 @@ non-goal stays) and drives many more concurrent `sipp` processes, so the
 existing scenario's docstring can actually be tested at a realistic
 source count instead of 2-3.
 
-### 5. `bye_spoof` — in-dialog request forgery / session hijacking
+### 4. `bye_spoof` — in-dialog request forgery / session hijacking
 Tests something none of the current scenarios touch: whether the SBC
 validates that a BYE/CANCEL/re-INVITE for an existing dialog actually
 comes from a party to that dialog (correct topology hiding, tag/Call-ID
@@ -96,14 +100,14 @@ handling) rather than accepting any request that happens to guess or
 replay a Call-ID + tags. A legitimate two-party call is set up first (via
 `register_legit_mix`'s legit stream or a new minimal call fixture), then
 a forged BYE is sent from a third source using guessed/observed dialog
-identifiers. This is lower priority than 1-3 (needs real dialog-state
+identifiers. This is lower priority than 1-2 (needs real dialog-state
 plumbing SIPp doesn't make trivial, and the attack precondition —
 obtaining a real Call-ID/tag pair — usually requires the attacker to have
 already compromised a leg of the call or be on-path, so it's less of a
 pure internet-exposure risk than the others). Worth a design spike before
 committing to it.
 
-### 6. RTP/media-plane flood
+### 5. RTP/media-plane flood
 Everything shipped and planned above is signaling-plane (SIP itself).
 After a real or simulated call setup, a separate attack surface exists at
 the negotiated RTP port — garbage UDP volume there tests the SBC/RTP
@@ -111,7 +115,7 @@ proxy's media-plane rate limiting independently of `pike`/`htable`, which
 only see SIP signaling. Needs a minimal RTP packet generator (or driving
 `sipp`'s own RTP echo capability) bound to the port negotiated by a real
 completed call. Bigger scope than the SIP-only scenarios above — sequence
-after 1-3 land.
+after 1-2 land.
 
 ## Later — instrumentation, not new attack surface
 

