@@ -120,10 +120,27 @@ BYE_COUNT=$(grep -c " BYE$" "${MOCK_LOG}")
 [[ "${INVITE_ALLOWED}" -eq 10 ]] || { echo "FAIL: expected 10 allowed INVITEs, mock log shows ${INVITE_ALLOWED}"; exit 1; }
 [[ "${BYE_COUNT}" -eq 10 ]] || { echo "FAIL: expected 10 BYEs (full call teardown), mock log shows ${BYE_COUNT}"; exit 1; }
 
-echo "== 15. audit log must still verify clean after all of the above =="
+echo "== 15. wait for the mock's window to clear again before invite_no_ack =="
+sleep 11
+
+echo "== 16. run invite_no_ack for real, under threshold - INVITEs answered, NEVER torn down =="
+OUT=$("${SIPSIEGE}" run invite_no_ack 127.0.0.1 --port "${MOCK_PORT}" \
+      --rate 5 --duration 2 --confirm "${ENGAGEMENT_ID}")
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: authorized invite_no_ack was refused - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"total_calls_attempted": 10' || { echo "FAIL: unexpected invite_no_ack call count - $OUT"; exit 1; }
+# The whole point of this scenario is that it never ACKs or BYEs a
+# successfully-answered call - the mock must show 10 MORE allowed
+# INVITEs (20 cumulative) but the BYE count must be UNCHANGED from
+# step 14's 10, proving no teardown ever happened for these calls.
+INVITE_ALLOWED=$(grep -c "INVITE ALLOWED" "${MOCK_LOG}")
+BYE_COUNT=$(grep -c " BYE$" "${MOCK_LOG}")
+[[ "${INVITE_ALLOWED}" -eq 20 ]] || { echo "FAIL: expected 20 cumulative allowed INVITEs, mock log shows ${INVITE_ALLOWED}"; exit 1; }
+[[ "${BYE_COUNT}" -eq 10 ]] || { echo "FAIL: BYE count changed (expected still 10, half-open calls must never be torn down) - mock log shows ${BYE_COUNT}"; exit 1; }
+
+echo "== 17. audit log must still verify clean after all of the above =="
 "${SIPSIEGE}" status | grep -q "Audit log: OK" || { echo "FAIL: audit log not OK at end"; exit 1; }
 
-echo "== 16. tamper the audit log and confirm status catches it =="
+echo "== 18. tamper the audit log and confirm status catches it =="
 AUDIT_FILE="${ENGAGEMENT_ID}.audit.jsonl"
 python3 - "${AUDIT_FILE}" <<'PYEOF'
 import json, sys

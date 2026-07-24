@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0
+
+- Added `invite_no_ack` (see [ROADMAP.md](ROADMAP.md) item 1): identical
+  INVITE traffic to `invite_flood` (single real source, high rate, rotating
+  spoofed identity and destination extension), but every answered call is
+  deliberately left half-open — no ACK, no BYE, ever. A target that
+  answers keeps that dialog (and, realistically, its own 200
+  retransmission timer) open waiting for an ACK that never arrives, a
+  meaningfully different resource cost than a clean setup-and-teardown
+  cycle: a comparatively small request rate can still exhaust dialog
+  capacity if each call is left open long enough. Tests whether a
+  target's dialog/session-table limits are configured at all, not just
+  its request-rate limiting.
+- No changes were needed to `core/sipp_runner.py` or
+  `tests/fixtures/mock_sbc.py` for this: the half-open behavior is
+  entirely a client-side omission (no `<send>` blocks after the
+  mandatory `200` recv in `invite_no_ack.xml`), and the existing
+  unconditional `-recv_timeout 2000` already means SIPp doesn't hang
+  waiting on anything it isn't told to wait for.
+- Integration test step verifies the distinction end-to-end: after a
+  real `invite_no_ack` run, the mock SBC's log shows the expected count
+  of newly-allowed INVITEs but zero new BYEs — proving the scenario
+  never tears a call down, not just that it "runs without erroring."
+
 ## 0.2.0
 
 Repo consistency pass to match the rest of the portfolio
