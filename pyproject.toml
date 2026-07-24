@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sipsiege"
+version = "0.1.0"
+description = "Authorized SIP/Kamailio flood-defense validation toolkit — scope-gated, audit-logged."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+sipsiege = "sipsiege.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sipsiege*"]
+
+[tool.setuptools.package-data]
+sipsiege = ["sipp_xml/*.xml", "templates/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install lint tools
+        run: pip install ruff
+      - name: ruff check
+        run: ruff check .
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Run unit tests
+        # Unit tests mock sipp_runner.run_sipp entirely - no real sipp
+        # binary needed here. That's deliberate: fast, no network,
+        # no real SIP traffic. Real sipp behavior is only exercised by
+        # the integration job below, which is why both jobs exist.
+        run: PYTHONPATH=. python -m pytest tests/unit/ -v
+
+  build-and-integration:
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install SIPp
+        run: sudo apt-get update && sudo apt-get install -y sip-tester
+      - name: Install build tooling
+        run: pip install build
+      - name: Real integration test
+        # Builds the actual wheel, installs it into a clean venv, and
+        # drives the REAL installed `sipsiege` command with real
+        # subprocess calls against a live mock SBC (tests/fixtures/mock_sbc.py) -
+        # not CliRunner, not a mocked sipp. This exists because two real
+        # bugs (SIPp discarding responses due to a prefixed Call-ID, and
+        # SIPp hanging forever without -nostdin/-recv_timeout when run
+        # without a TTY) both shipped past a fully green unit test suite,
+        # since those tests mock run_sipp() out entirely. Only a real
+        # sipp process talking to a real socket surfaces problems like
+        # that - see tests/integration/run_integration_test.sh for the
+        # full list of assertions this exercises.
+        run: bash tests/integration/run_integration_test.sh

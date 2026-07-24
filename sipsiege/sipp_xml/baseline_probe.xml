@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- baseline_probe.xml
+     One REGISTER, no flood behavior. Used before/after active
+     scenarios to check whether this source has been blocked. -->
+
+<!-- IMPORTANT: [call_id] must be used verbatim as the entire Call-ID
+     header value, unprefixed and unsuffixed. SIPp correlates responses
+     back to the open transaction using this value internally, not by
+     doing a literal string-compare against what it sent - a custom
+     prefix breaks that correlation and every response gets silently
+     discarded as "out of call", even a perfectly well-formed one.
+     Rotate identity via the From/To/Contact user-part instead. -->
+
+<scenario name="Baseline single REGISTER probe">
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:probe@[local_ip]>;tag=[call_number]
+      To: <sip:probe@[local_ip]>
+      Call-ID: [call_id]
+      CSeq: 1 REGISTER
+      Contact: <sip:probe@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: SIP-Redteam-Toolkit-Probe
+      Expires: 3600
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- SIPp requires exactly one MANDATORY recv per call - making every
+       possible final response optional (as an earlier version of this
+       file did) means SIPp never considers the transaction closed and
+       hangs indefinitely waiting at the next optional recv, even after
+       a valid 200 arrives. A non-200 final response (403/430/500) or a
+       silent drop both surface the same way here: no matching 200
+       within recv_timeout, call marked failed/timed out. That binary
+       success/not-success signal is all this toolkit's comparisons
+       (baseline vs. during-flood, before vs. after) actually need. -->
+  <recv response="100" optional="true"></recv>
+  <recv response="200"></recv>
+
+</scenario>
