@@ -27,6 +27,7 @@ from .core.audit_log import verify_log_integrity
 from .core.authorization import AuthorizationError, load_authorization
 from .core.engagement import Engagement, EngagementRefused
 from .scenarios.baseline_probe import BaselineProbe
+from .scenarios.invite_flood import InviteFlood
 from .scenarios.register_burst import RegisterBurst
 from .scenarios.register_flood import RegisterFlood
 from .scenarios.register_legit_mix import RegisterLegitMix
@@ -38,6 +39,7 @@ SCENARIOS = {
     "register_burst": RegisterBurst,
     "register_rotating_source": RegisterRotatingSource,
     "register_legit_mix": RegisterLegitMix,
+    "invite_flood": InviteFlood,
 }
 
 TEMPLATE = """\

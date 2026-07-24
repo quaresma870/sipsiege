@@ -67,7 +67,7 @@ content = content.replace(
 # refusal, the same way a user would populate their own production
 # infrastructure before a real run.
 content = content.replace(
-    'excluded_targets: []', 'excluded_targets: ["172.21.0.57"]'
+    'excluded_targets: []', 'excluded_targets: ["192.0.2.57"]'
 )
 open("authorization.yml", "w").write(content)
 PYEOF
@@ -80,7 +80,7 @@ echo "== 7. status must report a clean, verified audit log =="
 "${SIPSIEGE}" status | grep -q "Audit log: OK" || { echo "FAIL: audit log not OK at start"; exit 1; }
 
 echo "== 8. scope refusal: production-style excluded target must be refused =="
-OUT=$("${SIPSIEGE}" baseline 172.21.0.57 --port "${MOCK_PORT}" || true)
+OUT=$("${SIPSIEGE}" baseline 192.0.2.57 --port "${MOCK_PORT}" || true)
 echo "${OUT}" | grep -q "allowed:  False" || { echo "FAIL: excluded target was not refused"; exit 1; }
 echo "${OUT}" | grep -q "exclusion" || { echo "FAIL: refusal reason missing exclusion mention"; exit 1; }
 
@@ -107,10 +107,23 @@ sleep 11
 OUT=$("${SIPSIEGE}" baseline 127.0.0.1 --port "${MOCK_PORT}")
 echo "${OUT}" | grep -q '"reachable": true' || { echo "FAIL: source did not recover after window cleared - $OUT"; exit 1; }
 
-echo "== 14. audit log must still verify clean after all of the above =="
+echo "== 14. run invite_flood for real, under threshold - full INVITE/ACK/BYE teardown =="
+OUT=$("${SIPSIEGE}" run invite_flood 127.0.0.1 --port "${MOCK_PORT}" \
+      --rate 5 --duration 2 --confirm "${ENGAGEMENT_ID}")
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: authorized invite_flood was refused - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"total_calls_attempted": 10' || { echo "FAIL: unexpected invite_flood call count - $OUT"; exit 1; }
+# Every call must have been INVITE-accepted by the mock AND torn down
+# with a BYE - if either count is short of 10, either the mock's new
+# INVITE/ACK/BYE handling or invite_flood.xml's call flow regressed.
+INVITE_ALLOWED=$(grep -c "INVITE ALLOWED" "${MOCK_LOG}")
+BYE_COUNT=$(grep -c " BYE$" "${MOCK_LOG}")
+[[ "${INVITE_ALLOWED}" -eq 10 ]] || { echo "FAIL: expected 10 allowed INVITEs, mock log shows ${INVITE_ALLOWED}"; exit 1; }
+[[ "${BYE_COUNT}" -eq 10 ]] || { echo "FAIL: expected 10 BYEs (full call teardown), mock log shows ${BYE_COUNT}"; exit 1; }
+
+echo "== 15. audit log must still verify clean after all of the above =="
 "${SIPSIEGE}" status | grep -q "Audit log: OK" || { echo "FAIL: audit log not OK at end"; exit 1; }
 
-echo "== 15. tamper the audit log and confirm status catches it =="
+echo "== 16. tamper the audit log and confirm status catches it =="
 AUDIT_FILE="${ENGAGEMENT_ID}.audit.jsonl"
 python3 - "${AUDIT_FILE}" <<'PYEOF'
 import json, sys

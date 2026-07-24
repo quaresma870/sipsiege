@@ -64,10 +64,12 @@ PYTHONPATH=. python -m sipsiege.cli baseline 10.10.10.50
 | `register_burst` | active | Short burst sized just under your `pike` threshold — false-positive check for legitimate bursty traffic. |
 | `register_rotating_source` | active | Concurrent flood from multiple *real* local source IPs — tests whether a per-IP threshold like `pike`'s is enough, or whether you need an aggregate limit too. Requires `--local-ips`. |
 | `register_legit_mix` | active | Flood + a low-rate legitimate stream running concurrently — checks whether real endpoints get collaterally blocked. Requires `--attacker-ip` and `--legit-ip`. |
+| `invite_flood` | active | Single real source, rotating spoofed identity and destination extension, each call completed cleanly (INVITE→200→ACK→BYE). Validates call-setup/dialog limits under INVITE volume — a different resource cost than REGISTER volume. |
 
 Run `list-scenarios` for the same info from the CLI. See
-[ROADMAP.md](ROADMAP.md) for what's planned next — INVITE floods, digest
-auth brute-force, and other attack patterns beyond REGISTER.
+[ROADMAP.md](ROADMAP.md) for what's planned next — half-open dialog
+exhaustion, digest auth brute-force, and other attack patterns beyond
+REGISTER/INVITE floods.
 
 ### register_rotating_source and register_legit_mix need extra local IPs
 
@@ -110,7 +112,8 @@ sipsiege/
 │   │   ├── register_flood.py
 │   │   ├── register_burst.py
 │   │   ├── register_rotating_source.py
-│   │   └── register_legit_mix.py
+│   │   ├── register_legit_mix.py
+│   │   └── invite_flood.py
 │   ├── sipp_xml/                     # SIPp scenario definitions, one per scenario
 │   └── templates/
 ├── tests/

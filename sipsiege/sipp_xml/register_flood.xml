@@ -3,7 +3,7 @@
 
 <!-- register_flood.xml
      Single real source, rotating spoofed identity per request -
-     reproduces the 19 July 2026 incident pattern. -->
+     the classic single-source REGISTER flood pattern. -->
 
 <!-- IMPORTANT: [call_id] must be used verbatim as the entire Call-ID
      header value, unprefixed and unsuffixed. SIPp correlates responses

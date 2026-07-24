@@ -66,14 +66,14 @@ def test_load_valid_authorization(tmp_path, write_auth):
     auth = load_authorization(path)
     assert auth.engagement_id == "test-eng-1"
     assert auth.is_authorized("10.10.10.50")
-    assert not auth.is_authorized("172.21.0.57")  # excluded
+    assert not auth.is_authorized("192.0.2.57")  # excluded
     assert not auth.is_authorized("8.8.8.8")       # not in scope
 
 
 def test_refusal_reason_for_excluded_target(tmp_path, write_auth):
     path = write_auth(tmp_path)
     auth = load_authorization(path)
-    reason = auth.refusal_reason("172.21.0.57")
+    reason = auth.refusal_reason("192.0.2.57")
     assert "exclusion" in reason
 
 

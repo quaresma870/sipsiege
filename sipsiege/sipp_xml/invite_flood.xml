@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- invite_flood.xml
+     Single real source, rotating spoofed identity AND rotating
+     destination extension per call - a call-setup flood, not a
+     registration flood. Each call is completed cleanly (INVITE ->
+     200 -> ACK -> immediate BYE) so the only variable under test is
+     call-setup rate; a scenario that deliberately leaves calls
+     half-open to exhaust dialog state is a different, separate test
+     (see ROADMAP.md's invite_no_ack item) and must not be conflated
+     with this one. -->
+
+<!-- IMPORTANT: [call_id] must be used verbatim as the entire Call-ID
+     header value, unprefixed and unsuffixed. SIPp correlates responses
+     back to the open transaction using this value internally, not by
+     doing a literal string-compare against what it sent - a custom
+     prefix breaks that correlation and every response gets silently
+     discarded as "out of call", even a perfectly well-formed one.
+     Rotate identity via the From/To/Contact user-part instead. -->
+
+<scenario name="INVITE Flood - single source, rotating identity and destination">
+
+  <send retrans="500">
+    <![CDATA[
+
+      INVITE sip:[call_number]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:floodtest[call_number]@[local_ip]>;tag=[call_number]
+      To: <sip:[call_number]@[remote_ip]:[remote_port]>
+      Call-ID: [call_id]
+      CSeq: 1 INVITE
+      Contact: <sip:floodtest[call_number]@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: SIP-Redteam-Toolkit-InviteFlood
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=floodtest[call_number] 0 0 IN IP[local_ip_type] [local_ip]
+      s=-
+      c=IN IP[media_ip_type] [media_ip]
+      t=0 0
+      m=audio [media_port] RTP/AVP 0
+      a=rtpmap:0 PCMU/8000
+
+    ]]>
+  </send>
+
+  <!-- SIPp requires exactly one MANDATORY recv per open transaction -
+       making every possible final response optional means SIPp never
+       considers the transaction closed and hangs indefinitely waiting
+       at the next optional recv, even after a valid response arrives.
+       A non-200 final response (404/486/500 - a very plausible outcome
+       here, since the rotating destination extension usually doesn't
+       exist) or a silent drop both surface the same way: no matching
+       200 within recv_timeout, call marked failed. That binary
+       success/not-success signal is all this toolkit's before/after
+       comparisons actually need - see baseline_probe.xml for the same
+       pattern applied to REGISTER. -->
+  <recv response="100" optional="true"></recv>
+  <recv response="180" optional="true"></recv>
+  <recv response="200"></recv>
+
+  <send>
+    <![CDATA[
+
+      ACK sip:[call_number]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:floodtest[call_number]@[local_ip]>;tag=[call_number]
+      To: <sip:[call_number]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 1 ACK
+      Contact: <sip:floodtest[call_number]@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Tear the call down immediately - this scenario is measuring
+       call-SETUP rate, not sustained call volume. A pause here would
+       just be dead time that inflates apparent duration without
+       adding signal. -->
+  <send retrans="500">
+    <![CDATA[
+
+      BYE sip:[call_number]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:floodtest[call_number]@[local_ip]>;tag=[call_number]
+      To: <sip:[call_number]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 2 BYE
+      Contact: <sip:floodtest[call_number]@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200"></recv>
+
+</scenario>

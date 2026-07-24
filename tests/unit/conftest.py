@@ -10,7 +10,7 @@ def _write_auth(tmp_path, **overrides):
         engagement_id="test-eng-1",
         authorized_by="Test User",
         targets=["10.10.10.50", "192.168.1.0/24", "*.lab.internal"],
-        excluded=["172.21.0.57"],
+        excluded=["192.0.2.57"],
         start=(now - timedelta(hours=1)).isoformat(),
         end=(now + timedelta(hours=1)).isoformat(),
         confirmation_phrase="I confirm authorization for test-eng-1",
