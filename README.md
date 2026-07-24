@@ -68,7 +68,7 @@ PYTHONPATH=. python -m sipsiege.cli baseline 10.10.10.50
 | Scenario | Tier | Purpose |
 |---|---|---|
 | `baseline_probe` | baseline | Single REGISTER — reachability + before/after block check. No `--confirm`. |
-| `register_flood` | active | Single real source, rotating spoofed identity, high rate. Reproduces the actual incident. |
+| `register_flood` | active | Single real source, rotating spoofed identity, high rate. |
 | `register_burst` | active | Short burst sized just under your `pike` threshold — false-positive check for legitimate bursty traffic. |
 | `register_rotating_source` | active | Concurrent flood from multiple *real* local source IPs — tests whether a per-IP threshold like `pike`'s is enough, or whether you need an aggregate limit too. Requires `--local-ips`. |
 | `register_legit_mix` | active | Flood + a low-rate legitimate stream running concurrently — checks whether real endpoints get collaterally blocked. Requires `--attacker-ip` and `--legit-ip`. |
