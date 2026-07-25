@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- user_enum.xml
+     Recon, not load: a single unauthenticated REGISTER per candidate
+     extension, [field0] fed from an -inf CSV of a sequential range
+     (see scenarios/user_enum.py). Deliberately does NOT attempt the
+     digest challenge/response cycle that digest_bruteforce.xml does -
+     this scenario only cares whether the target's very first response
+     differs between an account that exists and one that doesn't.
+
+     The enumeration signal is which response arrives, not any content
+     inside it: recv response="401" is the one mandatory close (see
+     baseline_probe.xml for the same "exactly one mandatory recv"
+     pattern), so SIPp's own SuccessfulCall/FailedCall split *is* the
+     detector - SuccessfulCall counts candidates the target challenged
+     for auth (looks like a real account), FailedCall counts anything
+     else (404, a differently-shaped rejection, or silence) within
+     recv_timeout. A target that answers every candidate identically
+     (secure/uniform) makes every call "successful" here; one that
+     differentiates (enumerable) does not - either way, no separate
+     instrumentation is needed to see which. -->
+
+<!-- IMPORTANT: [call_id] must be used verbatim as the entire Call-ID
+     header value, unprefixed and unsuffixed - see every other scenario
+     file's identical warning; the reason is the same here. -->
+
+<scenario name="User Enumeration - one unauthenticated REGISTER per candidate extension">
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field0]@[remote_ip]>;tag=[call_number]
+      To: <sip:[field0]@[remote_ip]>
+      Call-ID: [call_id]
+      CSeq: 1 REGISTER
+      Contact: <sip:[field0]@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: SIP-Redteam-Toolkit-UserEnum
+      Expires: 3600
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="100" optional="true"></recv>
+  <recv response="401"></recv>
+
+</scenario>
