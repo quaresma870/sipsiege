@@ -46,41 +46,49 @@ before picking any of these up.
   unconditional `-recv_timeout 2000` already means SIPp only hangs
   waiting on things it's actually told to wait for.
 
+### v0.4.0
+- `digest_bruteforce` — credential stuffing against SIP digest auth, the
+  single most common real-world VoIP attack (not flooding) — attackers
+  cycle short numeric extensions against common/default passwords to
+  hijack a trunk for toll fraud. Exercises a *different* Kamailio defense
+  than `pike`/`htable`: auth-failure-specific throttling, not raw
+  request-rate limiting. Turned out SIPp's `[authentication]` keyword
+  can't take per-call credentials via `[field0]`/`[field1]` substitution
+  the way this entry originally assumed — it silently corrupts the
+  Authorization header instead of erroring. Fixed by driving one real
+  `sipp` subprocess per credential pair (`-s`/`-au`/`-ap` per invocation)
+  rather than one invocation with `-inf` CSV injection, which turned out
+  to match how this technique is actually done in practice anyway:
+  deliberate and low-and-slow, not a flood. See CHANGELOG.md for the
+  full account of the discovery.
+
 ## Next — attack scenario coverage
 
-REGISTER and INVITE flooding (clean and half-open) are the patterns
-covered so far. The items below are each grounded in a documented,
-commonly-seen SIP/VoIP attack technique — prioritized by how often they
-show up against real internet-facing SBCs, not by implementation
-difficulty.
+REGISTER flooding, INVITE flooding (clean and half-open), and digest
+credential stuffing are the patterns covered so far. The items below are
+each grounded in a documented, commonly-seen SIP/VoIP attack technique —
+prioritized by how often they show up against real internet-facing SBCs,
+not by implementation difficulty.
 
-### 1. `digest_bruteforce` — credential stuffing against REGISTER auth (highest priority)
-The single most common real-world VoIP attack is not flooding, it's
-credential stuffing against SIP digest auth to hijack a trunk for toll
-fraud — attackers cycle short numeric extensions (1000-9999) against
-common/default passwords. This exercises a *different* Kamailio defense
-than `pike`/`htable`: auth-failure-specific throttling (e.g. `pike` tuned
-on 401/403 responses, or fail2ban-style external blocking on auth
-failures specifically). A pure volume flood and a low-and-slow credential
-stuffing run can trip completely different thresholds, so this is not
-redundant with `register_flood` even though both are REGISTER-shaped.
-Tier: active. Needs: SIPp's built-in digest auth support (`-au`/`-ap` or
-inline `[authentication]` in the XML) and a wordlist-driving loop over
-extension/password pairs — this is the first scenario that needs
-per-attempt credential variation rather than just identity rotation.
+### 1. `user_enum` — extension/account enumeration (recon tier) (highest priority)
+Precedes `digest_bruteforce` in a real attack chain: probing REGISTER or
+OPTIONS against a range of extensions and diffing the response (401 =
+valid account exists, 404 = doesn't) to build a target list before
+brute-forcing it — the same technique tools like `svwar` use. Low volume,
+not disruptive, so this belongs at `baseline` tier like `baseline_probe`,
+not `active` — it's recon, not load. `tests/fixtures/mock_sbc.py` already
+has what this needs, shipped alongside `digest_bruteforce`:
+`--extension-oracle` makes an unauthenticated REGISTER for an
+unprovisioned numeric extension get 404 instead of 401, a deliberately
+enumerable configuration to detect against; without that flag (the
+default) every numeric extension gets a uniform 401, the secure case
+this scenario should report as such. A single mandatory `401` recv (see
+every other scenario's "exactly one mandatory recv" pattern) over a
+range/list of candidate extensions makes SIPp's own SuccessfulCall/
+FailedCall split *be* the enumeration signal, with no new instrumentation
+needed.
 
-### 2. `user_enum` — extension/account enumeration (recon tier)
-Precedes #1 in a real attack chain: probing REGISTER or OPTIONS against a
-range of extensions and diffing the response (401 = valid account exists,
-404 = doesn't) to build a target list before brute-forcing it — the same
-technique tools like `svwar` use. Low volume, not disruptive, so this
-belongs at `baseline` tier like `baseline_probe`, not `active` — it's
-recon, not load. Valuable on its own merit (confirms whether Kamailio
-returns a uniform response regardless of account existence, which is the
-actual defense against this) and as the natural companion/precondition to
-#1. Good candidate to ship together with #1.
-
-### 3. `rotating_source`, scaled realistically
+### 2. `rotating_source`, scaled realistically
 The existing `register_rotating_source` is correct in design (real bound
 local IPs, no source-IP spoofing — see guardrails below) but is currently
 bottlenecked at "however many IPs you're willing to `ip addr add` by
@@ -92,7 +100,7 @@ non-goal stays) and drives many more concurrent `sipp` processes, so the
 existing scenario's docstring can actually be tested at a realistic
 source count instead of 2-3.
 
-### 4. `bye_spoof` — in-dialog request forgery / session hijacking
+### 3. `bye_spoof` — in-dialog request forgery / session hijacking
 Tests something none of the current scenarios touch: whether the SBC
 validates that a BYE/CANCEL/re-INVITE for an existing dialog actually
 comes from a party to that dialog (correct topology hiding, tag/Call-ID
@@ -107,7 +115,7 @@ already compromised a leg of the call or be on-path, so it's less of a
 pure internet-exposure risk than the others). Worth a design spike before
 committing to it.
 
-### 5. RTP/media-plane flood
+### 4. RTP/media-plane flood
 Everything shipped and planned above is signaling-plane (SIP itself).
 After a real or simulated call setup, a separate attack surface exists at
 the negotiated RTP port — garbage UDP volume there tests the SBC/RTP

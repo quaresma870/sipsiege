@@ -27,6 +27,7 @@ from .core.audit_log import verify_log_integrity
 from .core.authorization import AuthorizationError, load_authorization
 from .core.engagement import Engagement, EngagementRefused
 from .scenarios.baseline_probe import BaselineProbe
+from .scenarios.digest_bruteforce import DigestBruteforce
 from .scenarios.invite_flood import InviteFlood
 from .scenarios.invite_no_ack import InviteNoAck
 from .scenarios.register_burst import RegisterBurst
@@ -41,6 +42,7 @@ SCENARIOS = {
     "register_rotating_source": RegisterRotatingSource,
     "register_legit_mix": RegisterLegitMix,
     "invite_flood": InviteFlood,
+    "digest_bruteforce": DigestBruteforce,
     "invite_no_ack": InviteNoAck,
 }
 
@@ -187,6 +189,8 @@ def cmd_run(args):
         kwargs["legit_ip"] = args.legit_ip
     if args.legit_rate:
         kwargs["legit_rate"] = args.legit_rate
+    if args.wordlist:
+        kwargs["wordlist"] = args.wordlist
 
     result = scenario.run(**kwargs)
     _print_result(result)
@@ -234,6 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--attacker-ip", help="for register_legit_mix")
     p_run.add_argument("--legit-ip", help="for register_legit_mix")
     p_run.add_argument("--legit-rate", type=int, default=1, help="for register_legit_mix")
+    p_run.add_argument("--wordlist", help="extension,password CSV for digest_bruteforce "
+                                           "(defaults to the bundled template)")
     p_run.set_defaults(func=cmd_run)
 
     return p

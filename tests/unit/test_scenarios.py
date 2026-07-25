@@ -1,9 +1,12 @@
+import json
 
 import pytest
 
+from sipsiege.core.audit_log import verify_log_integrity
 from sipsiege.core.engagement import Engagement
 from sipsiege.core.sipp_runner import SippResult
 from sipsiege.scenarios.baseline_probe import BaselineProbe
+from sipsiege.scenarios.digest_bruteforce import DigestBruteforce
 from sipsiege.scenarios.invite_flood import InviteFlood
 from sipsiege.scenarios.invite_no_ack import InviteNoAck
 from sipsiege.scenarios.register_flood import RegisterFlood
@@ -162,6 +165,73 @@ def test_invite_no_ack_runs_with_correct_confirm(monkeypatch, engagement, tmp_pa
     assert calls[0]["total_calls"] == 500
     assert calls[0]["scenario_file"].name == "invite_no_ack.xml"
     assert result.summary["total_calls_attempted"] == 500
+
+
+# --- DigestBruteforce (active tier - confirm required, needs a wordlist) ---
+
+def test_digest_bruteforce_refused_without_confirm(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.digest_bruteforce.run_sipp", make_fake_run_sipp(calls))
+
+    scenario = DigestBruteforce(engagement)
+    result = scenario.run(target="10.10.10.50", rate=3, duration=2, results_root=tmp_path / "results")
+
+    assert not result.allowed
+    assert "confirm" in result.refusal_reason.lower()
+    assert len(calls) == 0
+
+
+def test_digest_bruteforce_refused_with_missing_wordlist(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.digest_bruteforce.run_sipp", make_fake_run_sipp(calls))
+
+    scenario = DigestBruteforce(engagement)
+    result = scenario.run(
+        target="10.10.10.50", rate=3, duration=2, confirm="test-eng-1",
+        wordlist=str(tmp_path / "does-not-exist.csv"), results_root=tmp_path / "results",
+    )
+
+    assert not result.allowed
+    assert "wordlist" in result.refusal_reason
+    assert len(calls) == 0
+
+
+def test_digest_bruteforce_runs_with_correct_confirm(monkeypatch, engagement, tmp_path):
+    # SIPp's [authentication] keyword takes its credentials from -au/-ap/-s
+    # for the whole process, not per-call substitution (see
+    # digest_bruteforce.py's docstring) - so this scenario drives one real
+    # sipp invocation per credential pair, not one invocation with -inf.
+    monkeypatch.setattr("sipsiege.scenarios.digest_bruteforce.time.sleep", lambda _s: None)
+    calls = []
+    monkeypatch.setattr(
+        "sipsiege.scenarios.digest_bruteforce.run_sipp",
+        make_fake_run_sipp(calls, write_stats=True, successful="1", failed="0"),
+    )
+
+    scenario = DigestBruteforce(engagement)
+    result = scenario.run(
+        target="10.10.10.50", rate=3, duration=2,
+        confirm="test-eng-1", results_root=tmp_path / "results",
+    )
+
+    assert result.allowed
+    # rate * duration = 6 credential pairs -> 6 separate sipp invocations,
+    # each a single call (rate=1, total_calls=1) with its own -s/-au/-ap.
+    assert len(calls) == 6
+    assert all(c["rate"] == 1 and c["total_calls"] == 1 for c in calls)
+    assert all(c["extra_args"][0] == "-s" for c in calls)
+    assert result.summary["credential_pairs_attempted"] == 6
+    assert result.summary["successful_logins"] == 6  # fake always reports success
+    assert result.summary["failed_attempts"] == 0
+    # Each credential pair is 2 real REGISTER requests - the rate budget
+    # gate must have been checked against that doubled rate, not the
+    # nominal --rate. If it weren't, a max_total_requests ceiling sized
+    # for the nominal rate could silently pass twice the traffic it's
+    # supposed to bound.
+    valid, _broken_at, _count = verify_log_integrity(engagement.audit_log.path)
+    assert valid
+    last_entry = json.loads(engagement.audit_log.path.read_text().splitlines()[-1])
+    assert last_entry["details"]["rate"] == 6  # rate*2
 
 
 # --- RegisterRotatingSource (active tier, needs >=2 local_ips) ---

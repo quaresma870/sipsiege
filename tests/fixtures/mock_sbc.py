@@ -22,6 +22,21 @@ Behavior:
     (the client sees no reply / a timeout), which is exactly what
     SIPSiege's baseline_probe/invite_flood scenarios are designed to
     detect.
+  - REGISTER is the one place this mock does something genuinely
+    protocol-aware rather than just "always 200 or always drop": if
+    the From header's username is purely numeric (a provisioned-
+    extension-style identity, as used by digest_bruteforce/user_enum -
+    every other scenario here uses an alphabetic identity like
+    "floodtest0" or "probe" and is completely unaffected), it's
+    treated as requiring real digest auth. An unauthenticated REGISTER
+    gets a 401 with a fresh nonce; a REGISTER carrying an Authorization
+    header gets its digest response verified for real (RFC 2617 MD5,
+    no qop) against KNOWN_CREDENTIALS - 200 if it matches, 403 if it
+    doesn't. With --extension-oracle, an unauthenticated REGISTER for
+    a numeric username NOT in KNOWN_CREDENTIALS gets 404 instead of
+    401 - a deliberately enumerable ("is this extension real?")
+    configuration for user_enum to detect; without the flag (the
+    default), every numeric username gets the same 401 regardless.
   - BYE always gets a plain 200 OK, unconditionally, uncounted against
     the limiter - tearing down a call you already let through isn't
     the thing being rate-limited. ACK gets no response, as normal.
@@ -36,10 +51,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import random
 import re
 import socket
 import time
+import uuid
 from collections import defaultdict, deque
 
 VIA_RE = re.compile(rb"^Via:\s*(.+)$", re.MULTILINE)
@@ -47,6 +64,17 @@ FROM_RE = re.compile(rb"^From:\s*(.+)$", re.MULTILINE)
 TO_RE = re.compile(rb"^To:\s*(.+)$", re.MULTILINE)
 CALLID_RE = re.compile(rb"^Call-ID:\s*(.+)$", re.MULTILINE)
 CSEQ_RE = re.compile(rb"^CSeq:\s*(.+)$", re.MULTILINE)
+AUTHORIZATION_RE = re.compile(rb"^Authorization:\s*(.+)$", re.MULTILINE)
+
+# Synthetic test credentials only - matched against sipsiege's own
+# bundled tests/../templates/digest_wordlist_default.csv so the
+# digest_bruteforce integration test can exercise a real MD5 match
+# (200) and a real MD5 mismatch (403), not stubbed outcomes.
+KNOWN_CREDENTIALS = {
+    "1000": "changeme",
+    "1234": "password123",
+}
+REALM = "mocksbc"
 
 
 def build_200_ok(request: bytes) -> bytes:
@@ -116,6 +144,81 @@ def build_invite_200_ok(request: bytes) -> bytes:
     return b"\r\n".join(header_lines) + b"\r\n\r\n" + sdp_body
 
 
+def _sip_header_lines(request: bytes) -> list[bytes]:
+    """The Via/From/To/Call-ID/CSeq lines every response here mirrors
+    back, factored out since build_401_challenge and
+    build_403_forbidden both need exactly this and nothing else."""
+    def _find(pattern):
+        m = pattern.search(request)
+        return m.group(1).strip() if m else b""
+
+    return [
+        b"Via: " + _find(VIA_RE),
+        b"From: " + _find(FROM_RE),
+        b"To: " + _find(TO_RE),
+        b"Call-ID: " + _find(CALLID_RE),
+        b"CSeq: " + _find(CSEQ_RE),
+    ]
+
+
+def extract_from_username(request: bytes) -> str:
+    """Pulls the user part out of the From header's sip:user@host URI -
+    used to decide whether a REGISTER's username looks like a real
+    provisioned extension (purely numeric) or one of this project's own
+    scenario identities (always alphabetic, e.g. "floodtest0", "probe")."""
+    m = FROM_RE.search(request)
+    if not m:
+        return ""
+    uri_match = re.search(rb"sip:([^@]+)@", m.group(1))
+    return uri_match.group(1).decode(errors="replace") if uri_match else ""
+
+
+def build_401_challenge(request: bytes) -> bytes:
+    """Fresh WWW-Authenticate challenge, no qop - so the [authentication]
+    keyword's own digest computation (and _digest_response_matches'
+    verification of it below) stays the simple RFC 2617 case."""
+    nonce = uuid.uuid4().hex
+    lines = [b"SIP/2.0 401 Unauthorized", *_sip_header_lines(request)]
+    lines.append(f'WWW-Authenticate: Digest realm="{REALM}", nonce="{nonce}", algorithm=MD5'.encode())
+    lines += [b"Content-Length: 0", b"", b""]
+    return b"\r\n".join(lines)
+
+
+def build_404_not_found(request: bytes) -> bytes:
+    lines = [b"SIP/2.0 404 Not Found", *_sip_header_lines(request), b"Content-Length: 0", b"", b""]
+    return b"\r\n".join(lines)
+
+
+def build_403_forbidden(request: bytes) -> bytes:
+    lines = [b"SIP/2.0 403 Forbidden", *_sip_header_lines(request), b"Content-Length: 0", b"", b""]
+    return b"\r\n".join(lines)
+
+
+def _parse_digest_header(header_value: bytes) -> dict[str, str]:
+    """Parses a SIP Authorization header's key="value" (or bare key=value)
+    pairs into a plain dict - just enough to verify a digest response,
+    not a general-purpose header parser."""
+    text = header_value.decode(errors="replace")
+    return {k: (quoted or bare) for k, quoted, bare in re.findall(r'(\w+)=(?:"([^"]*)"|([^,\s]+))', text)}
+
+
+def digest_response_matches(auth: dict[str, str], method: bytes, password: str) -> bool:
+    """Real RFC 2617 MD5 digest verification (no qop) - HA1/HA2/response,
+    not a stubbed comparison. This is what makes the digest_bruteforce
+    integration test's 200-for-correct/403-for-wrong assertions mean
+    something: the crypto actually has to match."""
+    username = auth.get("username", "")
+    realm = auth.get("realm", "")
+    nonce = auth.get("nonce", "")
+    uri = auth.get("uri", "")
+    claimed_response = auth.get("response", "")
+
+    ha1 = hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()
+    ha2 = hashlib.md5(f"{method.decode()}:{uri}".encode()).hexdigest()
+    expected = hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
+    return expected == claimed_response
+
+
 class SlidingWindowLimiter:
     def __init__(self, threshold: int, window_seconds: float):
         self.threshold = threshold
@@ -132,12 +235,16 @@ class SlidingWindowLimiter:
         return len(dq) <= self.threshold
 
 
-def serve(host: str, port: int, threshold: int, window: float, log_path: str | None = None):
+def serve(
+    host: str, port: int, threshold: int, window: float,
+    log_path: str | None = None, extension_oracle: bool = False,
+):
     limiter = SlidingWindowLimiter(threshold=threshold, window_seconds=window)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     print(f"mock_sbc listening on {host}:{port} "
-          f"(threshold={threshold} reqs / {window}s window)")
+          f"(threshold={threshold} reqs / {window}s window, "
+          f"extension_oracle={extension_oracle})")
 
     logf = open(log_path, "a") if log_path else None
     allowed_count = 0
@@ -149,17 +256,59 @@ def serve(host: str, port: int, threshold: int, window: float, log_path: str | N
             source_ip = addr[0]
             method = data.split(b" ", 1)[0]
 
-            if method in (b"REGISTER", b"INVITE"):
+            if method == b"REGISTER":
+                ok = limiter.allow(source_ip)  # call exactly once - it mutates state
+                if not ok:
+                    dropped_count += 1  # simulate pike-style silent drop
+                    if logf:
+                        logf.write(
+                            f"{time.time()} {source_ip} REGISTER DROPPED "
+                            f"allowed_total={allowed_count} dropped_total={dropped_count}\n"
+                        )
+                        logf.flush()
+                    continue
+
+                allowed_count += 1
+                username = extract_from_username(data)
+                auth_header = AUTHORIZATION_RE.search(data)
+
+                if not username.isdigit():
+                    # Every existing scenario's identity (floodtest0,
+                    # probe, legituser, ...) is alphabetic - unaffected
+                    # by digest auth, exactly the pre-existing behavior.
+                    resp, tag = build_200_ok(data), "ALLOWED"
+                elif auth_header:
+                    auth = _parse_digest_header(auth_header.group(1))
+                    expected_password = KNOWN_CREDENTIALS.get(username)
+                    if expected_password is not None and digest_response_matches(
+                        auth, b"REGISTER", expected_password
+                    ):
+                        resp, tag = build_200_ok(data), "AUTH_OK"
+                    else:
+                        resp, tag = build_403_forbidden(data), "AUTH_FAIL"
+                elif extension_oracle and username not in KNOWN_CREDENTIALS:
+                    resp, tag = build_404_not_found(data), "NOT_FOUND"
+                else:
+                    resp, tag = build_401_challenge(data), "AUTH_CHALLENGE"
+
+                sock.sendto(resp, addr)
+                if logf:
+                    logf.write(
+                        f"{time.time()} {source_ip} REGISTER {tag} "
+                        f"allowed_total={allowed_count} dropped_total={dropped_count}\n"
+                    )
+                    logf.flush()
+            elif method == b"INVITE":
                 ok = limiter.allow(source_ip)  # call exactly once - it mutates state
                 if ok:
-                    resp = build_invite_200_ok(data) if method == b"INVITE" else build_200_ok(data)
+                    resp = build_invite_200_ok(data)
                     sock.sendto(resp, addr)
                     allowed_count += 1
                 else:
                     dropped_count += 1  # simulate pike-style silent drop
                 if logf:
                     logf.write(
-                        f"{time.time()} {source_ip} {method.decode()} "
+                        f"{time.time()} {source_ip} INVITE "
                         f"{'ALLOWED' if ok else 'DROPPED'} "
                         f"allowed_total={allowed_count} dropped_total={dropped_count}\n"
                     )
@@ -188,8 +337,11 @@ def main():
                     help="max requests per source IP within --window before dropping")
     p.add_argument("--window", type=float, default=2.0, help="sliding window, seconds")
     p.add_argument("--log", default=None, help="optional path to append a simple hit log")
+    p.add_argument("--extension-oracle", action="store_true",
+                    help="unauthenticated REGISTER for an unknown numeric extension gets "
+                         "404 instead of 401 - deliberately enumerable, for user_enum")
     args = p.parse_args()
-    serve(args.host, args.port, args.threshold, args.window, args.log)
+    serve(args.host, args.port, args.threshold, args.window, args.log, args.extension_oracle)
 
 
 if __name__ == "__main__":

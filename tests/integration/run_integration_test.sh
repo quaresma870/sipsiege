@@ -137,10 +137,30 @@ BYE_COUNT=$(grep -c " BYE$" "${MOCK_LOG}")
 [[ "${INVITE_ALLOWED}" -eq 20 ]] || { echo "FAIL: expected 20 cumulative allowed INVITEs, mock log shows ${INVITE_ALLOWED}"; exit 1; }
 [[ "${BYE_COUNT}" -eq 10 ]] || { echo "FAIL: BYE count changed (expected still 10, half-open calls must never be torn down) - mock log shows ${BYE_COUNT}"; exit 1; }
 
-echo "== 17. audit log must still verify clean after all of the above =="
+echo "== 17. wait for the mock's window to clear again before digest_bruteforce =="
+sleep 11
+
+echo "== 18. run digest_bruteforce for real - real MD5 digest crypto, both outcomes =="
+OUT=$("${SIPSIEGE}" run digest_bruteforce 127.0.0.1 --port "${MOCK_PORT}" \
+      --rate 5 --duration 1 --confirm "${ENGAGEMENT_ID}")
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: authorized digest_bruteforce was refused - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"credential_pairs_attempted": 5' || { echo "FAIL: unexpected digest_bruteforce pair count - $OUT"; exit 1; }
+# The bundled default wordlist has exactly 2 credential pairs that match
+# the mock's known-good accounts (1000/changeme, 1234/password123) and 3
+# that don't - if this doesn't read exactly 2 successes / 3 failures,
+# either sipsiege's or the mock's MD5 digest computation regressed (a
+# stubbed/fake success count would not reproduce this exact split).
+echo "${OUT}" | grep -q '"successful_logins": 2' || { echo "FAIL: expected exactly 2 real successful logins - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"failed_attempts": 3' || { echo "FAIL: expected exactly 3 real failed attempts - $OUT"; exit 1; }
+AUTH_OK=$(grep -c "REGISTER AUTH_OK" "${MOCK_LOG}")
+AUTH_FAIL=$(grep -c "REGISTER AUTH_FAIL" "${MOCK_LOG}")
+[[ "${AUTH_OK}" -eq 2 ]] || { echo "FAIL: expected 2 AUTH_OK in mock log, got ${AUTH_OK}"; exit 1; }
+[[ "${AUTH_FAIL}" -eq 3 ]] || { echo "FAIL: expected 3 AUTH_FAIL in mock log, got ${AUTH_FAIL}"; exit 1; }
+
+echo "== 19. audit log must still verify clean after all of the above =="
 "${SIPSIEGE}" status | grep -q "Audit log: OK" || { echo "FAIL: audit log not OK at end"; exit 1; }
 
-echo "== 18. tamper the audit log and confirm status catches it =="
+echo "== 20. tamper the audit log and confirm status catches it =="
 AUDIT_FILE="${ENGAGEMENT_ID}.audit.jsonl"
 python3 - "${AUDIT_FILE}" <<'PYEOF'
 import json, sys
