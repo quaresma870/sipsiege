@@ -13,7 +13,12 @@ runs. No scope file, no scan — no `--force` to get around it.
 
 ## Why this exists
 
-Prevent and test targeted real attacks.
+Validates that your own SIP/Kamailio infrastructure actually holds up
+against real attack patterns — REGISTER/INVITE floods, half-open
+dialogs, credential stuffing — before a real attacker finds out for
+you. Only ever run against infrastructure you own or are explicitly
+authorized to test; see the warning above and
+[`docs/legal-and-ethics.md`](docs/legal-and-ethics.md).
 
 ## Installation
 
