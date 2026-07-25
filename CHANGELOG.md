@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.0
+
+- Added `digest_bruteforce` (see [ROADMAP.md](ROADMAP.md) item 1): credential
+  stuffing against SIP digest auth — the single most common real-world VoIP
+  attack, and a different Kamailio defense than `pike`/`htable` (auth-failure
+  throttling, not raw request-rate limiting). Ships with a small default
+  extension/password wordlist (`templates/digest_wordlist_default.csv`,
+  override with `--wordlist`).
+- **Real SIPp constraint discovered while building this** (documented inline
+  in `digest_bruteforce.py` and `digest_bruteforce.xml`, alongside the two
+  other real-`sipp`-only discoveries already in this file): SIPp's
+  `[authentication]` keyword takes its credentials from the `-au`/`-ap`/`-s`
+  command-line flags for the whole process, not from per-call substitution.
+  `[authentication username=[field0] password=[field1]]` looks like
+  plausible syntax and SIPp doesn't reject it, but it silently corrupts the
+  Authorization header instead of erroring — caught by inspecting the raw
+  bytes sent on the wire against a real mock target, not assumed. Fixed by
+  driving one real `sipp` subprocess per credential pair (`-s`/`-au`/`-ap`
+  set per invocation) instead of one invocation with `-inf` CSV injection —
+  which also matches how this technique is actually done in practice:
+  deliberate and low-and-slow, not a flood.
+- `tests/fixtures/mock_sbc.py` now does real RFC 2617 MD5 digest
+  verification for REGISTERs with a purely-numeric From-header username
+  (every existing scenario's identity is alphabetic — `floodtest0`, `probe`,
+  etc. — and is completely unaffected): 401 challenge with a fresh nonce,
+  then real HA1/HA2/response verification against a small set of known
+  test credentials — 200 on a match, 403 otherwise. Also added
+  `--extension-oracle`, an opt-in mode where an unauthenticated REGISTER
+  for an unprovisioned numeric extension gets 404 instead of 401 — a
+  deliberately enumerable configuration reserved for the next roadmap item,
+  `user_enum`.
+- Integration test step verifies the real crypto both ways: against the
+  bundled wordlist's exact known-good/known-bad rows, asserts precisely 2
+  successful logins and 3 failed attempts — a stubbed or fake success count
+  would not reproduce that exact split.
+
 ## 0.3.0
 
 - Added `invite_no_ack` (see [ROADMAP.md](ROADMAP.md) item 1): identical
