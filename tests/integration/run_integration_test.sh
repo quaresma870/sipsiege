@@ -27,6 +27,8 @@ cleanup() {
   wait "${MOCK_PID:-0}" 2>/dev/null || true
   [[ -n "${MOCK2_PID:-}" ]] && kill "${MOCK2_PID}" 2>/dev/null || true
   wait "${MOCK2_PID:-0}" 2>/dev/null || true
+  [[ -n "${MOCK3_PID:-}" ]] && kill "${MOCK3_PID}" 2>/dev/null || true
+  wait "${MOCK3_PID:-0}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -196,7 +198,38 @@ echo "${OUT}" | grep -q '"differentiated_response_count": 4' || { echo "FAIL: ex
 echo "== 22. audit log must still verify clean after all of the above =="
 "${SIPSIEGE}" status | grep -q "Audit log: OK" || { echo "FAIL: audit log not OK at end"; exit 1; }
 
-echo "== 23. tamper the audit log and confirm status catches it =="
+echo "== 23. run options_flood against the default (vulnerable) mock - unrated bypass =="
+# Well over the mock's threshold (15/10s) - if pike/htable-style limiting
+# applied to OPTIONS the same as REGISTER/INVITE, most of these would be
+# dropped. Against the DEFAULT mock config (no --limit-options), every
+# single one must succeed - proving the method-scope gap is real, not
+# just "sipp ran without erroring."
+OUT=$("${SIPSIEGE}" run options_flood 127.0.0.1 --port "${MOCK_PORT}" \
+      --rate 50 --duration 2 --confirm "${ENGAGEMENT_ID}")
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: authorized options_flood was refused - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"total_calls_attempted": 100' || { echo "FAIL: unexpected options_flood call count - $OUT"; exit 1; }
+OPTIONS_UNLIMITED=$(grep -c "OPTIONS UNLIMITED" "${MOCK_LOG}")
+[[ "${OPTIONS_UNLIMITED}" -eq 100 ]] || { echo "FAIL: expected 100 unrated OPTIONS in mock log, got ${OPTIONS_UNLIMITED}"; exit 1; }
+
+echo "== 24. run options_flood against a --limit-options mock - secure configuration trips =="
+MOCK3_PORT=15072
+MOCK3_LOG="${WORKDIR}/mock_sbc_limit_options.log"
+python3 "${REPO_ROOT}/tests/fixtures/mock_sbc.py" \
+  --host 127.0.0.1 --port "${MOCK3_PORT}" --threshold 15 --window 10 --log "${MOCK3_LOG}" --limit-options &
+MOCK3_PID=$!
+sleep 1
+OUT=$("${SIPSIEGE}" run options_flood 127.0.0.1 --port "${MOCK3_PORT}" \
+      --rate 50 --duration 2 --confirm "${ENGAGEMENT_ID}")
+kill "${MOCK3_PID}" 2>/dev/null || true
+wait "${MOCK3_PID}" 2>/dev/null || true
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: authorized options_flood (limited mock) was refused - $OUT"; exit 1; }
+# Same 100-request flood, but this mock counts OPTIONS against the same
+# limiter as REGISTER/INVITE - some requests must now be dropped, unlike
+# step 23's unconditional 100/100.
+OPTIONS_DROPPED=$(grep -c "OPTIONS DROPPED" "${MOCK3_LOG}")
+[[ "${OPTIONS_DROPPED}" -gt 0 ]] || { echo "FAIL: expected the --limit-options mock to drop some OPTIONS, none were dropped"; exit 1; }
+
+echo "== 25. tamper the audit log and confirm status catches it =="
 AUDIT_FILE="${ENGAGEMENT_ID}.audit.jsonl"
 python3 - "${AUDIT_FILE}" <<'PYEOF'
 import json, sys

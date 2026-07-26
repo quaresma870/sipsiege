@@ -89,6 +89,29 @@ before picking any of these up.
   output). If both `--local-ips` and `--local-ip-range` are given, the
   explicit list wins outright rather than merging the two.
 
+### v0.7.0
+- `options_flood` — method-scope rate-limiting bypass. Same flood shape
+  as `register_flood` (single real source, high rate, rotating spoofed
+  identity per request), but using OPTIONS instead of REGISTER. Most
+  real Kamailio configs wire `pike`/`htable` checks into the REGISTER
+  and INVITE routes specifically; OPTIONS (along with SUBSCRIBE,
+  MESSAGE, PUBLISH, etc.) commonly passes straight through unrated. A
+  source already blocked instantly over REGISTER can still flood
+  freely over an unprotected method like OPTIONS if the same limiter
+  isn't wired into every route that reaches it.
+  `tests/fixtures/mock_sbc.py` gained `--limit-options`: by default
+  (off) OPTIONS is answered unconditionally and never touches the
+  per-IP limiter at all — the real gap this scenario demonstrates; with
+  the flag, OPTIONS shares the same counter as REGISTER/INVITE — the
+  secure configuration. The integration test verifies both: a 100-call
+  flood against the default mock succeeds 100/100 (unrated bypass),
+  the identical flood against a `--limit-options` mock trips the
+  limiter and drops calls, same rigor as every prior "test both
+  configurations for real" scenario.
+- Kamailio defense coverage doc: `docs/kamailio-defenses.md`, concrete
+  configuration guidance (modparams, route snippets) for defending
+  against every scenario this toolkit ships, one section per scenario.
+
 ## Next — attack scenario coverage
 
 REGISTER flooding, INVITE flooding (clean and half-open), digest
@@ -122,6 +145,47 @@ only see SIP signaling. Needs a minimal RTP packet generator (or driving
 `sipp`'s own RTP echo capability) bound to the port negotiated by a real
 completed call. Bigger scope than the SIP-only scenarios above — sequence
 after 1 lands.
+
+### 3. Malformed-message parser stress (`sanity` module / RFC 4475 SIP Torture Test)
+Every scenario shipped so far sends well-formed SIP; nothing tests
+whether the target's `sanity_check()` / core parser (max header count,
+max message length, malformed Request-URI, mismatched Content-Length,
+etc.) is actually hardened rather than just assumed hardened. RFC 4475
+("SIP Torture Test Messages") already defines a canonical set of
+deliberately-malformed-but-parseable messages for exactly this purpose
+— this scenario would replay a subset of them at a real target. Harder
+than the flood scenarios: "success" here isn't a clean SuccessfulCall
+count, it's confirming the target rejected or safely ignored each
+malformed message rather than crashing, hanging, or forwarding it
+somewhere it shouldn't — needs a different, per-message pass/fail
+model than the binary 200/not-200 pattern every other scenario uses.
+
+### 4. TCP/TLS connection-table exhaustion (`tcp_max_connections`)
+Every current scenario is UDP, stateless per request. A real Kamailio
+deployment listening on TCP/TLS instead has (or should have) a
+`tcp_max_connections`/`tls_max_connections` ceiling — a source that
+opens many connections without ever completing a transaction on them
+can exhaust that table independently of any SIP-layer rate limiting.
+Meaningfully more SIPp complexity than anything shipped so far (holding
+raw TCP/TLS connections open deliberately, not just sending fast) —
+worth a design spike on how to do this with SIPp before committing to
+an implementation approach.
+
+### 5. Trusted-header IP spoofing (`real_ip_header` / reverse-proxy trust)
+A misconfiguration class, not a volume attack: when Kamailio sits behind
+a load balancer or SBC and is configured to trust a client-supplied
+header (e.g. `X-Real-IP`) for its own per-source-IP accounting instead
+of the actual UDP/TCP source, that header can be forged to make every
+request look like it came from a different (or constantly-rotating)
+source — evading `pike` entirely from one real, single source, without
+ever touching the network-layer source address (so this stays inside
+the "no IP-layer spoofing, ever" guardrail below). Needs
+`tests/fixtures/mock_sbc.py` to model a reverse-proxy trust boundary
+that doesn't exist yet — a flag for "trust this header for per-source
+accounting" alongside real from-socket accounting, so the integration
+test can demonstrate both a trusting (vulnerable) and non-trusting
+(secure) configuration, same rigor as `--extension-oracle` and
+`options_flood`'s `--limit-options`.
 
 ## Later — instrumentation, not new attack surface
 

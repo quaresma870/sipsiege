@@ -40,6 +40,14 @@ Behavior:
   - BYE always gets a plain 200 OK, unconditionally, uncounted against
     the limiter - tearing down a call you already let through isn't
     the thing being rate-limited. ACK gets no response, as normal.
+  - OPTIONS models a real method-scope rate-limiting gap: by default
+    it's answered 200 OK unconditionally, NOT counted against the same
+    per-IP limiter REGISTER/INVITE share - mirroring how real Kamailio
+    configs commonly wire pike/htable into the REGISTER/INVITE routes
+    specifically and leave other methods passing straight through.
+    With --limit-options, OPTIONS shares the same limiter/counter as
+    REGISTER and INVITE instead - the secure configuration, for
+    options_flood's integration test to verify both ways.
   - A blocked source recovers once enough time passes that its
     request count within the trailing window drops back under
     threshold.
@@ -238,13 +246,14 @@ class SlidingWindowLimiter:
 def serve(
     host: str, port: int, threshold: int, window: float,
     log_path: str | None = None, extension_oracle: bool = False,
+    limit_options: bool = False,
 ):
     limiter = SlidingWindowLimiter(threshold=threshold, window_seconds=window)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     print(f"mock_sbc listening on {host}:{port} "
           f"(threshold={threshold} reqs / {window}s window, "
-          f"extension_oracle={extension_oracle})")
+          f"extension_oracle={extension_oracle}, limit_options={limit_options})")
 
     logf = open(log_path, "a") if log_path else None
     allowed_count = 0
@@ -320,6 +329,32 @@ def serve(
                 if logf:
                     logf.write(f"{time.time()} {source_ip} BYE\n")
                     logf.flush()
+            elif method == b"OPTIONS":
+                if limit_options:
+                    # Secure configuration: OPTIONS shares the same
+                    # per-IP counter as REGISTER/INVITE.
+                    ok = limiter.allow(source_ip)  # call exactly once - it mutates state
+                    if ok:
+                        sock.sendto(build_200_ok(data), addr)
+                        allowed_count += 1
+                    else:
+                        dropped_count += 1
+                    if logf:
+                        logf.write(
+                            f"{time.time()} {source_ip} OPTIONS "
+                            f"{'ALLOWED' if ok else 'DROPPED'} "
+                            f"allowed_total={allowed_count} dropped_total={dropped_count}\n"
+                        )
+                        logf.flush()
+                else:
+                    # Default, vulnerable configuration: the real gap
+                    # this scenario tests - OPTIONS is answered
+                    # unconditionally, never touching the limiter at
+                    # all, unlike every other counted method here.
+                    sock.sendto(build_200_ok(data), addr)
+                    if logf:
+                        logf.write(f"{time.time()} {source_ip} OPTIONS UNLIMITED\n")
+                        logf.flush()
             # ACK and anything else: no response expected, ignore.
     except KeyboardInterrupt:
         pass
@@ -340,8 +375,15 @@ def main():
     p.add_argument("--extension-oracle", action="store_true",
                     help="unauthenticated REGISTER for an unknown numeric extension gets "
                          "404 instead of 401 - deliberately enumerable, for user_enum")
+    p.add_argument("--limit-options", action="store_true",
+                    help="OPTIONS shares the same per-IP limiter as REGISTER/INVITE - the "
+                         "secure configuration. Default (off) leaves OPTIONS uncounted and "
+                         "unconditionally answered, the method-scope gap options_flood tests")
     args = p.parse_args()
-    serve(args.host, args.port, args.threshold, args.window, args.log, args.extension_oracle)
+    serve(
+        args.host, args.port, args.threshold, args.window, args.log,
+        args.extension_oracle, args.limit_options,
+    )
 
 
 if __name__ == "__main__":
