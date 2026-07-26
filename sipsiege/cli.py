@@ -185,6 +185,8 @@ def cmd_run(args):
     )
     if args.local_ips:
         kwargs["local_ips"] = [ip.strip() for ip in args.local_ips.split(",")]
+    if args.local_ip_range:
+        kwargs["local_ip_range"] = args.local_ip_range
     if args.attacker_ip:
         kwargs["attacker_ip"] = args.attacker_ip
     if args.legit_ip:
@@ -241,6 +243,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--transport", choices=["udp", "tcp"], default="udp")
     p_run.add_argument("--confirm", help="must match this authorization's engagement_id")
     p_run.add_argument("--local-ips", help="comma-separated, for register_rotating_source")
+    p_run.add_argument("--local-ip-range", help="CIDR alternative to --local-ips for "
+                                                 "register_rotating_source, e.g. 10.0.0.0/28 - "
+                                                 "only addresses already bound locally are used")
     p_run.add_argument("--attacker-ip", help="for register_legit_mix")
     p_run.add_argument("--legit-ip", help="for register_legit_mix")
     p_run.add_argument("--legit-rate", type=int, default=1, help="for register_legit_mix")

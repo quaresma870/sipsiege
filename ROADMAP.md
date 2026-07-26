@@ -77,6 +77,18 @@ before picking any of these up.
   the integration test verifies both the secure (uniform 401) and
   vulnerable (differentiated 401/404) configurations for real.
 
+### v0.6.0
+- `register_rotating_source` scaling. Was bottlenecked at "however many
+  IPs you're willing to `ip addr add` by hand." Added `--local-ip-range`
+  (CIDR) as an alternative to listing addresses one at a time with
+  `--local-ips`, so the "does aggregate rate limiting exist, not just
+  per-IP" question can be tested at dozens of sources instead of 2-3.
+  Never auto-configures interfaces — that non-goal stays; the range is
+  only checked against what's actually bound, via a throwaway UDP socket
+  bind per candidate address (no `netifaces`, no parsing `ip addr`
+  output). If both `--local-ips` and `--local-ip-range` are given, the
+  explicit list wins outright rather than merging the two.
+
 ## Next — attack scenario coverage
 
 REGISTER flooding, INVITE flooding (clean and half-open), digest
@@ -85,19 +97,7 @@ so far. The items below are each grounded in a documented, commonly-seen
 SIP/VoIP attack technique — prioritized by how often they show up against
 real internet-facing SBCs, not by implementation difficulty.
 
-### 1. `rotating_source`, scaled realistically (highest priority)
-The existing `register_rotating_source` is correct in design (real bound
-local IPs, no source-IP spoofing — see guardrails below) but is currently
-bottlenecked at "however many IPs you're willing to `ip addr add` by
-hand." A real distributed flood is dozens to thousands of sources. Worth
-adding a `--local-ip-range 10.0.0.0/24` convenience that validates the
-range is actually bound (never auto-configures interfaces itself — that
-non-goal stays) and drives many more concurrent `sipp` processes, so the
-"does aggregate rate limiting exist, not just per-IP" question in the
-existing scenario's docstring can actually be tested at a realistic
-source count instead of 2-3.
-
-### 2. `bye_spoof` — in-dialog request forgery / session hijacking
+### 1. `bye_spoof` — in-dialog request forgery / session hijacking
 Tests something none of the current scenarios touch: whether the SBC
 validates that a BYE/CANCEL/re-INVITE for an existing dialog actually
 comes from a party to that dialog (correct topology hiding, tag/Call-ID
@@ -105,14 +105,15 @@ handling) rather than accepting any request that happens to guess or
 replay a Call-ID + tags. A legitimate two-party call is set up first (via
 `register_legit_mix`'s legit stream or a new minimal call fixture), then
 a forged BYE is sent from a third source using guessed/observed dialog
-identifiers. This is lower priority than 1 (needs real dialog-state
-plumbing SIPp doesn't make trivial, and the attack precondition —
-obtaining a real Call-ID/tag pair — usually requires the attacker to have
-already compromised a leg of the call or be on-path, so it's less of a
-pure internet-exposure risk than the others). Worth a design spike before
-committing to it.
+identifiers. Genuinely harder than everything shipped so far (needs real
+dialog-state plumbing SIPp doesn't make trivial, and the attack
+precondition — obtaining a real Call-ID/tag pair — usually requires the
+attacker to have already compromised a leg of the call or be on-path, so
+it's less of a pure internet-exposure risk than the others). First in
+this list mainly by elimination; worth a design spike before committing
+to it, not a straightforward next build.
 
-### 3. RTP/media-plane flood
+### 2. RTP/media-plane flood
 Everything shipped and planned above is signaling-plane (SIP itself).
 After a real or simulated call setup, a separate attack surface exists at
 the negotiated RTP port — garbage UDP volume there tests the SBC/RTP
