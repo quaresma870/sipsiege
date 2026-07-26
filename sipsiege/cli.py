@@ -30,6 +30,7 @@ from .scenarios.baseline_probe import BaselineProbe
 from .scenarios.digest_bruteforce import DigestBruteforce
 from .scenarios.invite_flood import InviteFlood
 from .scenarios.invite_no_ack import InviteNoAck
+from .scenarios.options_flood import OptionsFlood
 from .scenarios.register_burst import RegisterBurst
 from .scenarios.register_flood import RegisterFlood
 from .scenarios.register_legit_mix import RegisterLegitMix
@@ -46,6 +47,7 @@ SCENARIOS = {
     "digest_bruteforce": DigestBruteforce,
     "user_enum": UserEnum,
     "invite_no_ack": InviteNoAck,
+    "options_flood": OptionsFlood,
 }
 
 TEMPLATE = """\

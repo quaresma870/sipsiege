@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.0
+
+- Added `options_flood` (see [ROADMAP.md](ROADMAP.md) v0.7.0): method-scope
+  rate-limiting bypass — same single-source, high-rate, rotating-identity
+  flood shape as `register_flood`, but using OPTIONS instead of REGISTER.
+  Most real Kamailio configs wire `pike`/`htable` checks into the REGISTER
+  and INVITE routes specifically; other methods (OPTIONS, SUBSCRIBE,
+  MESSAGE, PUBLISH) commonly pass straight through unrated. A source
+  already blocked over REGISTER can still flood freely over an
+  unprotected method like OPTIONS.
+- `tests/fixtures/mock_sbc.py` gained `--limit-options`: by default (off)
+  OPTIONS is answered 200 OK unconditionally and never touches the same
+  per-IP limiter REGISTER/INVITE share — modeling the real gap this
+  scenario tests. With the flag, OPTIONS shares that same counter — the
+  secure configuration. The integration test verifies both for real: a
+  100-request flood against the default mock succeeds 100/100 (proving
+  the bypass is real, not just "sipp ran without erroring"), and the
+  identical flood against a `--limit-options` mock trips the limiter and
+  drops requests.
+- Also added, as concrete future `ROADMAP.md` items rather than rushed
+  implementations: malformed-message parser stress (`sanity` module /
+  RFC 4475 SIP Torture Test messages), TCP/TLS connection-table
+  exhaustion (`tcp_max_connections`), and trusted-header IP spoofing
+  (`real_ip_header` behind a reverse proxy) — three more Kamailio
+  defense mechanisms beyond `pike`/`htable` and auth-failure throttling
+  that nothing in this toolkit exercises yet.
+- Added `docs/kamailio-defenses.md`: concrete Kamailio configuration
+  guidance (modparams, route snippets) for defending against every
+  scenario this toolkit ships, one section per scenario.
+
 ## 0.6.0
 
 - `register_rotating_source` (see [ROADMAP.md](ROADMAP.md) item 1): added

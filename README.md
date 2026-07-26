@@ -73,11 +73,15 @@ PYTHONPATH=. python -m sipsiege.cli baseline 10.10.10.50
 | `invite_no_ack` | active | Identical INVITE traffic to `invite_flood`, but every answered call is deliberately left half-open — no ACK, no BYE, ever. Validates dialog/session-table limits under sustained half-open volume, not just request-rate limiting. |
 | `digest_bruteforce` | active | Credential stuffing against SIP digest auth — one real REGISTER/401/REGISTER-with-digest cycle per extension/password pair from a wordlist (`--wordlist`, defaults to a small bundled one). Validates auth-failure throttling, a different defense than `pike`/`htable`'s raw request-rate limiting. Deliberately low-and-slow: one real `sipp` subprocess per credential pair, not one flood invocation. |
 | `user_enum` | baseline | One unauthenticated REGISTER per candidate extension in a range (`--ext-start`/`--ext-count`). Checks whether the target's response differs for real vs non-existent accounts — the recon step that precedes `digest_bruteforce` in a real attack chain. No `--confirm`. |
+| `options_flood` | active | Single real source, high-rate OPTIONS flood, rotating spoofed identity per request — same shape as `register_flood`. Validates whether rate limiting is wired into every SIP method's route, not just REGISTER/INVITE; a source already blocked over REGISTER may still flood freely over an unprotected method like OPTIONS. |
 
 Run `list-scenarios` for the same info from the CLI. See
 [ROADMAP.md](ROADMAP.md) for what's planned next — other attack
 patterns beyond REGISTER/INVITE floods, credential stuffing, and
-extension enumeration.
+extension enumeration. See
+[`docs/kamailio-defenses.md`](docs/kamailio-defenses.md) for concrete
+Kamailio configuration guidance — modparams and route snippets — for
+defending against every scenario in this table.
 
 ### register_rotating_source and register_legit_mix need extra local IPs
 
@@ -131,7 +135,8 @@ sipsiege/
 │   │   ├── invite_flood.py
 │   │   ├── invite_no_ack.py
 │   │   ├── digest_bruteforce.py
-│   │   └── user_enum.py
+│   │   ├── user_enum.py
+│   │   └── options_flood.py
 │   ├── sipp_xml/                     # SIPp scenario definitions, one per scenario
 │   └── templates/                    # digest_wordlist_default.csv - bundled default for digest_bruteforce
 ├── tests/
@@ -143,7 +148,8 @@ sipsiege/
 │                                      # used only by this project's own tests
 ├── .github/workflows/ci.yml          # lint -> unit tests (3.10/3.11/3.12) -> build+integration
 ├── docs/
-│   └── legal-and-ethics.md
+│   ├── legal-and-ethics.md
+│   └── kamailio-defenses.md          # config guidance for defending against every scenario
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md

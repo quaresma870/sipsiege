@@ -9,6 +9,7 @@ from sipsiege.scenarios.baseline_probe import BaselineProbe
 from sipsiege.scenarios.digest_bruteforce import DigestBruteforce
 from sipsiege.scenarios.invite_flood import InviteFlood
 from sipsiege.scenarios.invite_no_ack import InviteNoAck
+from sipsiege.scenarios.options_flood import OptionsFlood
 from sipsiege.scenarios.register_flood import RegisterFlood
 from sipsiege.scenarios.register_legit_mix import RegisterLegitMix
 from sipsiege.scenarios.register_rotating_source import RegisterRotatingSource
@@ -98,6 +99,37 @@ def test_register_flood_runs_with_correct_confirm(monkeypatch, engagement, tmp_p
     monkeypatch.setattr("sipsiege.scenarios.base.run_sipp", make_fake_run_sipp(calls))
 
     scenario = RegisterFlood(engagement)
+    result = scenario.run(
+        target="10.10.10.50", rate=50, duration=10,
+        confirm="test-eng-1", results_root=tmp_path / "results",
+    )
+
+    assert result.allowed
+    assert len(calls) == 1
+    assert calls[0]["rate"] == 50
+    assert calls[0]["total_calls"] == 500
+    assert result.summary["total_calls_attempted"] == 500
+
+
+# --- OptionsFlood (active tier - confirm required) ---
+
+def test_options_flood_refused_without_confirm(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.base.run_sipp", make_fake_run_sipp(calls))
+
+    scenario = OptionsFlood(engagement)
+    result = scenario.run(target="10.10.10.50", rate=50, duration=10, results_root=tmp_path / "results")
+
+    assert not result.allowed
+    assert "confirm" in result.refusal_reason.lower()
+    assert len(calls) == 0
+
+
+def test_options_flood_runs_with_correct_confirm(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.base.run_sipp", make_fake_run_sipp(calls))
+
+    scenario = OptionsFlood(engagement)
     result = scenario.run(
         target="10.10.10.50", rate=50, duration=10,
         confirm="test-eng-1", results_root=tmp_path / "results",
