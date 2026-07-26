@@ -72,11 +72,12 @@ PYTHONPATH=. python -m sipsiege.cli baseline 10.10.10.50
 | `invite_flood` | active | Single real source, rotating spoofed identity and destination extension, each call completed cleanly (INVITE→200→ACK→BYE). Validates call-setup/dialog limits under INVITE volume — a different resource cost than REGISTER volume. |
 | `invite_no_ack` | active | Identical INVITE traffic to `invite_flood`, but every answered call is deliberately left half-open — no ACK, no BYE, ever. Validates dialog/session-table limits under sustained half-open volume, not just request-rate limiting. |
 | `digest_bruteforce` | active | Credential stuffing against SIP digest auth — one real REGISTER/401/REGISTER-with-digest cycle per extension/password pair from a wordlist (`--wordlist`, defaults to a small bundled one). Validates auth-failure throttling, a different defense than `pike`/`htable`'s raw request-rate limiting. Deliberately low-and-slow: one real `sipp` subprocess per credential pair, not one flood invocation. |
+| `user_enum` | baseline | One unauthenticated REGISTER per candidate extension in a range (`--ext-start`/`--ext-count`). Checks whether the target's response differs for real vs non-existent accounts — the recon step that precedes `digest_bruteforce` in a real attack chain. No `--confirm`. |
 
 Run `list-scenarios` for the same info from the CLI. See
-[ROADMAP.md](ROADMAP.md) for what's planned next — extension
-enumeration and other attack patterns beyond REGISTER/INVITE floods
-and credential stuffing.
+[ROADMAP.md](ROADMAP.md) for what's planned next — other attack
+patterns beyond REGISTER/INVITE floods, credential stuffing, and
+extension enumeration.
 
 ### register_rotating_source and register_legit_mix need extra local IPs
 
@@ -122,7 +123,8 @@ sipsiege/
 │   │   ├── register_legit_mix.py
 │   │   ├── invite_flood.py
 │   │   ├── invite_no_ack.py
-│   │   └── digest_bruteforce.py
+│   │   ├── digest_bruteforce.py
+│   │   └── user_enum.py
 │   ├── sipp_xml/                     # SIPp scenario definitions, one per scenario
 │   └── templates/                    # digest_wordlist_default.csv - bundled default for digest_bruteforce
 ├── tests/

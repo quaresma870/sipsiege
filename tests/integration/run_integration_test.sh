@@ -25,6 +25,8 @@ MOCK_LOG="${WORKDIR}/mock_sbc.log"
 cleanup() {
   [[ -n "${MOCK_PID:-}" ]] && kill "${MOCK_PID}" 2>/dev/null || true
   wait "${MOCK_PID:-0}" 2>/dev/null || true
+  [[ -n "${MOCK2_PID:-}" ]] && kill "${MOCK2_PID}" 2>/dev/null || true
+  wait "${MOCK2_PID:-0}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -157,10 +159,44 @@ AUTH_FAIL=$(grep -c "REGISTER AUTH_FAIL" "${MOCK_LOG}")
 [[ "${AUTH_OK}" -eq 2 ]] || { echo "FAIL: expected 2 AUTH_OK in mock log, got ${AUTH_OK}"; exit 1; }
 [[ "${AUTH_FAIL}" -eq 3 ]] || { echo "FAIL: expected 3 AUTH_FAIL in mock log, got ${AUTH_FAIL}"; exit 1; }
 
-echo "== 19. audit log must still verify clean after all of the above =="
+echo "== 19. wait for the mock's window to clear again before user_enum =="
+sleep 11
+
+echo "== 20. run user_enum against the secure (default) mock - uniform 401 =="
+OUT=$("${SIPSIEGE}" run user_enum 127.0.0.1 --port "${MOCK_PORT}" \
+      --ext-start 998 --ext-count 5)
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: user_enum (baseline tier) was refused without --confirm - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"extensions_tested": 5' || { echo "FAIL: unexpected user_enum extension count - $OUT"; exit 1; }
+# Default mock has no --extension-oracle - every candidate gets the
+# same 401 regardless of whether it's a known account, so nothing
+# should read as differentiated.
+echo "${OUT}" | grep -q '"uniform_response_count": 5' || { echo "FAIL: expected all 5 candidates to get a uniform response - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"differentiated_response_count": 0' || { echo "FAIL: secure mock should not be enumerable - $OUT"; exit 1; }
+
+echo "== 21. run user_enum against a second, --extension-oracle mock - real enumeration detected =="
+MOCK2_PORT=15071
+MOCK2_LOG="${WORKDIR}/mock_sbc_oracle.log"
+python3 "${REPO_ROOT}/tests/fixtures/mock_sbc.py" \
+  --host 127.0.0.1 --port "${MOCK2_PORT}" --threshold 100 --window 30 --log "${MOCK2_LOG}" --extension-oracle &
+MOCK2_PID=$!
+sleep 1
+OUT=$("${SIPSIEGE}" run user_enum 127.0.0.1 --port "${MOCK2_PORT}" \
+      --ext-start 998 --ext-count 5)
+kill "${MOCK2_PID}" 2>/dev/null || true
+wait "${MOCK2_PID}" 2>/dev/null || true
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: user_enum against oracle mock was refused - $OUT"; exit 1; }
+# Of 998-1002, only 1000 is a known account (see mock_sbc.py's
+# KNOWN_CREDENTIALS) - --extension-oracle means the other 4 get 404
+# instead of 401, so exactly 1 candidate should read as uniform/
+# challenged and 4 as differentiated. A stubbed detector would not
+# reproduce this exact split.
+echo "${OUT}" | grep -q '"uniform_response_count": 1' || { echo "FAIL: expected exactly 1 real account found (ext 1000) - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"differentiated_response_count": 4' || { echo "FAIL: expected exactly 4 candidates to read as non-existent - $OUT"; exit 1; }
+
+echo "== 22. audit log must still verify clean after all of the above =="
 "${SIPSIEGE}" status | grep -q "Audit log: OK" || { echo "FAIL: audit log not OK at end"; exit 1; }
 
-echo "== 20. tamper the audit log and confirm status catches it =="
+echo "== 23. tamper the audit log and confirm status catches it =="
 AUDIT_FILE="${ENGAGEMENT_ID}.audit.jsonl"
 python3 - "${AUDIT_FILE}" <<'PYEOF'
 import json, sys

@@ -62,33 +62,30 @@ before picking any of these up.
   deliberate and low-and-slow, not a flood. See CHANGELOG.md for the
   full account of the discovery.
 
+### v0.5.0
+- `user_enum` — extension/account enumeration (recon tier). Precedes
+  `digest_bruteforce` in a real attack chain: one unauthenticated
+  REGISTER per candidate extension, diffing the response (401 = exists,
+  404 = doesn't with `--extension-oracle`) to build a target list before
+  brute-forcing it — the same technique tools like `svwar` use. Baseline
+  tier like `baseline_probe`, not active — it's recon, not load. A
+  single mandatory `401` recv (see every other scenario's "exactly one
+  mandatory recv" pattern) means SIPp's own SuccessfulCall/FailedCall
+  split *is* the enumeration signal, no new instrumentation needed.
+  `mock_sbc.py`'s `--extension-oracle` flag (built alongside
+  `digest_bruteforce` in 0.4.0) gets its first real exercise here -
+  the integration test verifies both the secure (uniform 401) and
+  vulnerable (differentiated 401/404) configurations for real.
+
 ## Next — attack scenario coverage
 
-REGISTER flooding, INVITE flooding (clean and half-open), and digest
-credential stuffing are the patterns covered so far. The items below are
-each grounded in a documented, commonly-seen SIP/VoIP attack technique —
-prioritized by how often they show up against real internet-facing SBCs,
-not by implementation difficulty.
+REGISTER flooding, INVITE flooding (clean and half-open), digest
+credential stuffing, and extension enumeration are the patterns covered
+so far. The items below are each grounded in a documented, commonly-seen
+SIP/VoIP attack technique — prioritized by how often they show up against
+real internet-facing SBCs, not by implementation difficulty.
 
-### 1. `user_enum` — extension/account enumeration (recon tier) (highest priority)
-Precedes `digest_bruteforce` in a real attack chain: probing REGISTER or
-OPTIONS against a range of extensions and diffing the response (401 =
-valid account exists, 404 = doesn't) to build a target list before
-brute-forcing it — the same technique tools like `svwar` use. Low volume,
-not disruptive, so this belongs at `baseline` tier like `baseline_probe`,
-not `active` — it's recon, not load. `tests/fixtures/mock_sbc.py` already
-has what this needs, shipped alongside `digest_bruteforce`:
-`--extension-oracle` makes an unauthenticated REGISTER for an
-unprovisioned numeric extension get 404 instead of 401, a deliberately
-enumerable configuration to detect against; without that flag (the
-default) every numeric extension gets a uniform 401, the secure case
-this scenario should report as such. A single mandatory `401` recv (see
-every other scenario's "exactly one mandatory recv" pattern) over a
-range/list of candidate extensions makes SIPp's own SuccessfulCall/
-FailedCall split *be* the enumeration signal, with no new instrumentation
-needed.
-
-### 2. `rotating_source`, scaled realistically
+### 1. `rotating_source`, scaled realistically (highest priority)
 The existing `register_rotating_source` is correct in design (real bound
 local IPs, no source-IP spoofing — see guardrails below) but is currently
 bottlenecked at "however many IPs you're willing to `ip addr add` by
@@ -100,7 +97,7 @@ non-goal stays) and drives many more concurrent `sipp` processes, so the
 existing scenario's docstring can actually be tested at a realistic
 source count instead of 2-3.
 
-### 3. `bye_spoof` — in-dialog request forgery / session hijacking
+### 2. `bye_spoof` — in-dialog request forgery / session hijacking
 Tests something none of the current scenarios touch: whether the SBC
 validates that a BYE/CANCEL/re-INVITE for an existing dialog actually
 comes from a party to that dialog (correct topology hiding, tag/Call-ID
@@ -108,14 +105,14 @@ handling) rather than accepting any request that happens to guess or
 replay a Call-ID + tags. A legitimate two-party call is set up first (via
 `register_legit_mix`'s legit stream or a new minimal call fixture), then
 a forged BYE is sent from a third source using guessed/observed dialog
-identifiers. This is lower priority than 1-2 (needs real dialog-state
+identifiers. This is lower priority than 1 (needs real dialog-state
 plumbing SIPp doesn't make trivial, and the attack precondition —
 obtaining a real Call-ID/tag pair — usually requires the attacker to have
 already compromised a leg of the call or be on-path, so it's less of a
 pure internet-exposure risk than the others). Worth a design spike before
 committing to it.
 
-### 4. RTP/media-plane flood
+### 3. RTP/media-plane flood
 Everything shipped and planned above is signaling-plane (SIP itself).
 After a real or simulated call setup, a separate attack surface exists at
 the negotiated RTP port — garbage UDP volume there tests the SBC/RTP
@@ -123,7 +120,7 @@ proxy's media-plane rate limiting independently of `pike`/`htable`, which
 only see SIP signaling. Needs a minimal RTP packet generator (or driving
 `sipp`'s own RTP echo capability) bound to the port negotiated by a real
 completed call. Bigger scope than the SIP-only scenarios above — sequence
-after 1-2 land.
+after 1 lands.
 
 ## Later — instrumentation, not new attack surface
 

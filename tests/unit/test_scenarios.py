@@ -12,6 +12,7 @@ from sipsiege.scenarios.invite_no_ack import InviteNoAck
 from sipsiege.scenarios.register_flood import RegisterFlood
 from sipsiege.scenarios.register_legit_mix import RegisterLegitMix
 from sipsiege.scenarios.register_rotating_source import RegisterRotatingSource
+from sipsiege.scenarios.user_enum import UserEnum
 
 
 def make_fake_run_sipp(calls_log, write_stats=False, successful="10", failed="0"):
@@ -26,11 +27,17 @@ def make_fake_run_sipp(calls_log, write_stats=False, successful="10", failed="0"
         results_dir.mkdir(parents=True, exist_ok=True)
         if write_stats:
             stats_csv = results_dir / "stats.csv"
+            # Real sipp -stf output only ever has (P)eriodic/(C)umulative
+            # column variants, never a bare name - matching that here
+            # (rather than an earlier version's invented bare columns)
+            # so readers that prefer (C) (digest_bruteforce, user_enum)
+            # and readers that prefer (P) (register_legit_mix) both see
+            # the actual successful/failed values passed in.
             stats_csv.write_text(
                 "StartTime;LastResetTime;CurrentTime;ElapsedTime;CallRate(P);"
                 "IncomingCall;OutgoingCall;TotalCallCreated;CurrentCall;"
-                "SuccessfulCall;SuccessfulCall(P);FailedCall;FailedCall(P)\n"
-                f"t0;t0;t1;1;1.0;0;0;10;0;10;{successful};0;{failed}\n"
+                "SuccessfulCall(P);SuccessfulCall(C);FailedCall(P);FailedCall(C)\n"
+                f"t0;t0;t1;1;1.0;0;0;10;0;{successful};{successful};{failed};{failed}\n"
             )
         return SippResult(
             return_code=0, stdout="", stderr="",
@@ -232,6 +239,61 @@ def test_digest_bruteforce_runs_with_correct_confirm(monkeypatch, engagement, tm
     assert valid
     last_entry = json.loads(engagement.audit_log.path.read_text().splitlines()[-1])
     assert last_entry["details"]["rate"] == 6  # rate*2
+
+
+# --- UserEnum (baseline tier - no confirm needed) ---
+
+def test_user_enum_needs_no_confirm(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        "sipsiege.scenarios.user_enum.run_sipp",
+        make_fake_run_sipp(calls, write_stats=True, successful="3", failed="2"),
+    )
+
+    scenario = UserEnum(engagement)
+    result = scenario.run(
+        target="10.10.10.50", ext_start=1000, ext_count=5, results_root=tmp_path / "results",
+    )
+
+    assert result.allowed  # baseline tier - no --confirm required, unlike active scenarios
+    assert len(calls) == 1
+    assert calls[0]["total_calls"] == 5
+    assert calls[0]["extra_args"] == ["-inf", str(tmp_path / "results" / "user_enum" / "10.10.10.50" / "candidates.csv")]
+    assert result.summary["extensions_tested"] == 5
+    assert result.summary["ext_range"] == "1000-1004"
+    assert result.summary["uniform_response_count"] == 3
+    assert result.summary["differentiated_response_count"] == 2
+
+
+def test_user_enum_refused_out_of_scope_never_calls_sipp(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.user_enum.run_sipp", make_fake_run_sipp(calls))
+
+    scenario = UserEnum(engagement)
+    result = scenario.run(target="8.8.8.8", ext_start=1000, ext_count=5, results_root=tmp_path / "results")
+
+    assert not result.allowed
+    assert "not listed in scope" in result.refusal_reason
+    assert len(calls) == 0
+
+
+def test_user_enum_writes_sequential_candidates_file(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        "sipsiege.scenarios.user_enum.run_sipp",
+        make_fake_run_sipp(calls, write_stats=True, successful="5", failed="0"),
+    )
+
+    scenario = UserEnum(engagement)
+    scenario.run(
+        target="10.10.10.50", ext_start=2000, ext_count=3, results_root=tmp_path / "results",
+    )
+
+    candidates_path = tmp_path / "results" / "user_enum" / "10.10.10.50" / "candidates.csv"
+    # SIPp's -inf files require an order-mode directive as their first
+    # line (SEQUENTIAL/RANDOM/USER) - discovered building
+    # digest_bruteforce, see that scenario's docstring.
+    assert candidates_path.read_text().splitlines() == ["SEQUENTIAL", "2000", "2001", "2002"]
 
 
 # --- RegisterRotatingSource (active tier, needs >=2 local_ips) ---

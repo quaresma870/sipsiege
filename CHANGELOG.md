@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0
+
+- Added `user_enum` (see [ROADMAP.md](ROADMAP.md) item 1): extension/account
+  enumeration, recon rather than load — one unauthenticated REGISTER per
+  candidate extension in a range (`--ext-start`/`--ext-count`), checking
+  whether the target's response differs for real vs non-existent accounts.
+  The precondition step in a real attack chain: an attacker enumerates
+  before spending effort brute-forcing. Baseline tier, no `--confirm`
+  needed, like `baseline_probe`.
+- The detection reads directly off SIPp's own SuccessfulCall/FailedCall
+  split — a single mandatory `401` recv (see every other scenario's
+  "exactly one mandatory recv" pattern) means SIPp's own counters *are*
+  the enumeration signal, no new instrumentation needed.
+- `tests/fixtures/mock_sbc.py`'s `--extension-oracle` flag (added
+  alongside `digest_bruteforce` in 0.4.0, unused until now) gets its
+  first real exercise: the integration test runs `user_enum` against
+  both configurations — the default (secure, uniform 401 for every
+  candidate) and `--extension-oracle` (vulnerable, 404 for unprovisioned
+  extensions) — and asserts the exact split each one produces, the same
+  "test both configurations for real" rigor used throughout this
+  project and its sibling repos.
+
 ## 0.4.0
 
 - Added `digest_bruteforce` (see [ROADMAP.md](ROADMAP.md) item 1): credential
