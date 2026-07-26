@@ -329,6 +329,66 @@ def test_rotating_source_spawns_one_sipp_per_ip(monkeypatch, engagement, tmp_pat
     assert used_ips == ["10.0.0.11", "10.0.0.12"]
 
 
+def test_rotating_source_local_ip_range_uses_real_bound_addresses(monkeypatch, engagement, tmp_path):
+    # Real bind check, not mocked: the whole 127.0.0.0/8 block binds
+    # successfully on Linux (loopback special-cases it), so a small
+    # range within it gives real, genuinely-bound addresses without
+    # needing any interface setup or a socket.bind mock.
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.register_rotating_source.run_sipp", make_fake_run_sipp(calls))
+
+    scenario = RegisterRotatingSource(engagement)
+    result = scenario.run(
+        target="10.10.10.50", rate=40, duration=10, confirm="test-eng-1",
+        local_ip_range="127.0.0.0/30", results_root=tmp_path / "results",
+    )
+
+    assert result.allowed
+    assert len(calls) == 2  # 127.0.0.0/30's two host addresses, both bound
+    assert result.summary["local_ip_range"] == "127.0.0.0/30"
+    assert result.summary["unbound_in_range"] == []
+    assert sorted(result.summary["sources_used"]) == ["127.0.0.1", "127.0.0.2"]
+
+
+def test_rotating_source_local_ip_range_refused_when_not_bound(monkeypatch, engagement, tmp_path):
+    # _is_bound_locally mocked to always fail - deterministic regardless
+    # of environment, unlike relying on a specific address range being
+    # unbound (a real 192.0.2.0/30 probe during development turned out
+    # to bind successfully in one sandboxed environment, which is
+    # exactly the kind of environment-specific surprise this avoids).
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.register_rotating_source.run_sipp", make_fake_run_sipp(calls))
+    monkeypatch.setattr("sipsiege.scenarios.register_rotating_source._is_bound_locally", lambda ip: False)
+
+    scenario = RegisterRotatingSource(engagement)
+    result = scenario.run(
+        target="10.10.10.50", rate=40, duration=10, confirm="test-eng-1",
+        local_ip_range="192.0.2.0/30", results_root=tmp_path / "results",
+    )
+
+    assert not result.allowed
+    assert "at least" in result.refusal_reason
+    assert "192.0.2.0/30" in result.refusal_reason
+    assert "0 are actually bound" in result.refusal_reason
+    assert len(calls) == 0
+
+
+def test_rotating_source_explicit_local_ips_take_precedence_over_range(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.register_rotating_source.run_sipp", make_fake_run_sipp(calls))
+
+    scenario = RegisterRotatingSource(engagement)
+    result = scenario.run(
+        target="10.10.10.50", rate=40, duration=10, confirm="test-eng-1",
+        local_ips=["10.0.0.11", "10.0.0.12"], local_ip_range="127.0.0.0/30",
+        results_root=tmp_path / "results",
+    )
+
+    assert result.allowed
+    assert sorted(c["local_ip"] for c in calls) == ["10.0.0.11", "10.0.0.12"]
+    assert "local_ip_range" not in result.summary
+
+
 # --- RegisterLegitMix (active tier, needs attacker_ip + legit_ip) ---
 
 def test_legit_mix_refused_without_both_ips(monkeypatch, engagement, tmp_path):

@@ -67,7 +67,7 @@ PYTHONPATH=. python -m sipsiege.cli baseline 10.10.10.50
 | `baseline_probe` | baseline | Single REGISTER — reachability + before/after block check. No `--confirm`. |
 | `register_flood` | active | Single real source, rotating spoofed identity, high rate. |
 | `register_burst` | active | Short burst sized just under your `pike` threshold — false-positive check for legitimate bursty traffic. |
-| `register_rotating_source` | active | Concurrent flood from multiple *real* local source IPs — tests whether a per-IP threshold like `pike`'s is enough, or whether you need an aggregate limit too. Requires `--local-ips`. |
+| `register_rotating_source` | active | Concurrent flood from multiple *real* local source IPs — tests whether a per-IP threshold like `pike`'s is enough, or whether you need an aggregate limit too. Requires `--local-ips` or `--local-ip-range` (CIDR, scales past a handful without listing each address). |
 | `register_legit_mix` | active | Flood + a low-rate legitimate stream running concurrently — checks whether real endpoints get collaterally blocked. Requires `--attacker-ip` and `--legit-ip`. |
 | `invite_flood` | active | Single real source, rotating spoofed identity and destination extension, each call completed cleanly (INVITE→200→ACK→BYE). Validates call-setup/dialog limits under INVITE volume — a different resource cost than REGISTER volume. |
 | `invite_no_ack` | active | Identical INVITE traffic to `invite_flood`, but every answered call is deliberately left half-open — no ACK, no BYE, ever. Validates dialog/session-table limits under sustained half-open volume, not just request-rate limiting. |
@@ -96,6 +96,13 @@ Then:
 ```bash
 PYTHONPATH=. python -m sipsiege.cli run register_rotating_source 10.10.10.50 \
   --local-ips 10.0.0.11,10.0.0.12 --rate 40 --duration 30 --confirm <engagement_id>
+
+# Past a handful of sources, bind a whole range instead of listing each
+# address, then point register_rotating_source at the CIDR - it only
+# uses addresses that are actually bound (checked, never configured):
+for i in $(seq 11 40); do sudo ip addr add 10.0.0.$i/32 dev eth0; done
+PYTHONPATH=. python -m sipsiege.cli run register_rotating_source 10.10.10.50 \
+  --local-ip-range 10.0.0.0/27 --rate 40 --duration 30 --confirm <engagement_id>
 
 PYTHONPATH=. python -m sipsiege.cli run register_legit_mix 10.10.10.50 \
   --attacker-ip 10.0.0.11 --legit-ip 10.0.0.12 \

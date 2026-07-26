@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.6.0
+
+- `register_rotating_source` (see [ROADMAP.md](ROADMAP.md) item 1): added
+  `--local-ip-range` (CIDR, e.g. `10.0.0.0/28`) as an alternative to listing
+  every source with `--local-ips`, so testing "does aggregate rate limiting
+  exist, not just per-IP" scales past a handful of manually-typed addresses.
+  Never configures interfaces itself — the range is only *checked* against
+  what's actually bound (a throwaway UDP socket bind to each candidate
+  address; the OS refuses with `EADDRNOTAVAIL` if it isn't really assigned
+  to a local interface), refusing with a clear count of bound-vs-unbound if
+  fewer than 2 real addresses are found. No new dependency: no `netifaces`,
+  no parsing of `ip addr` output (which is iproute2/Linux-specific and
+  would make this fragile across environments).
+- If both `--local-ips` and `--local-ip-range` are given, the explicit list
+  wins and the range is ignored entirely (not merged) — one unambiguous
+  source of truth for which addresses get used.
+- Unit tests exercise the real bind-check logic unmocked: the whole
+  `127.0.0.0/8` block binds successfully on Linux (loopback special-cases
+  it), giving genuinely-bound addresses without needing real interface
+  setup. The refusal path mocks the bind check itself rather than relying
+  on a specific "known unbound" address range — a real probe against
+  `192.0.2.0/30` (RFC 5737 TEST-NET-1) during development turned out to
+  bind successfully in this sandboxed environment, exactly the kind of
+  environment-specific surprise that approach would have been fragile to.
+
 ## 0.5.0
 
 - Added `user_enum` (see [ROADMAP.md](ROADMAP.md) item 1): extension/account
