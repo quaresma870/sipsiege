@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- bye_spoof_hijack.xml
+     Second half of bye_spoof: a single BYE for a dialog this process
+     never established, using the real Call-ID and target-assigned
+     To-tag harvested from bye_spoof_establish.xml's run (passed in via
+     -inf CSV injection - [field0]=Call-ID, [field1]=To-tag), sent from
+     a DIFFERENT real local source than the one that actually set the
+     call up. This is the core question: does the target validate that
+     an in-dialog request actually comes from a party to that dialog
+     (correct topology hiding / dialog-state tracking), or does it
+     accept any request that happens to carry a matching Call-ID and
+     tags regardless of source?
+
+     Uses the same "one MANDATORY 200 recv" shape as every other
+     scenario here for structural consistency, but unlike every other
+     scenario, SIPp's own SuccessfulCall/FailedCall split is NOT a
+     usable signal for this one - see the IMPORTANT note below. -->
+
+<!-- IMPORTANT: this scenario does NOT use [call_id] - the whole point
+     is sending an EXISTING dialog's real Call-ID (from -inf), not a
+     freshly-generated one. That's deliberate here, unlike every other
+     scenario in this project where using [call_id] verbatim is
+     required for SIPp's own response correlation to work - and it has
+     the same consequence as an earlier version of this project's very
+     first bug (see CHANGELOG.md's v0.1.0 entry): SIPp correlates
+     incoming responses to its own open call state by the Call-ID *it*
+     generated, not a literal comparison against the packet. Since this
+     scenario sends someone else's real Call-ID on purpose, SIPp can
+     NEVER recognize the target's response as belonging to this call -
+     confirmed against a real mock target, not assumed. The target's
+     actual response is still captured correctly in this run's own
+     -message_file transcript regardless of SIPp's own (always-failed)
+     bookkeeping; bye_spoof.py's _first_response_code() reads that
+     transcript directly instead of trusting stats.csv for this one
+     scenario. -->
+
+<scenario name="bye_spoof - hijack attempt from a different source">
+
+  <send retrans="500">
+    <![CDATA[
+
+      BYE sip:byespoof@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:byespoofhijacker@[local_ip]>;tag=byespoofhijacker
+      To: <sip:byespoof@[remote_ip]:[remote_port]>;tag=[field1]
+      Call-ID: [field0]
+      CSeq: 2 BYE
+      Contact: <sip:byespoofhijacker@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="100" optional="true"></recv>
+  <recv response="200"></recv>
+
+</scenario>

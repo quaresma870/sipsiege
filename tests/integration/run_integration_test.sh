@@ -29,6 +29,8 @@ cleanup() {
   wait "${MOCK2_PID:-0}" 2>/dev/null || true
   [[ -n "${MOCK3_PID:-}" ]] && kill "${MOCK3_PID}" 2>/dev/null || true
   wait "${MOCK3_PID:-0}" 2>/dev/null || true
+  [[ -n "${MOCK4_PID:-}" ]] && kill "${MOCK4_PID}" 2>/dev/null || true
+  wait "${MOCK4_PID:-0}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -229,7 +231,38 @@ echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: authorized options_flo
 OPTIONS_DROPPED=$(grep -c "OPTIONS DROPPED" "${MOCK3_LOG}")
 [[ "${OPTIONS_DROPPED}" -gt 0 ]] || { echo "FAIL: expected the --limit-options mock to drop some OPTIONS, none were dropped"; exit 1; }
 
-echo "== 25. tamper the audit log and confirm status catches it =="
+echo "== 25. run bye_spoof against the default (vulnerable) mock - hijack accepted =="
+# 127.0.0.1 (caller) establishes a real call against the DEFAULT mock
+# (no --reject-cross-source-bye) on MOCK_PORT; 127.0.0.2 (spoofer, a
+# genuinely different real loopback address - the whole 127.0.0.0/8
+# block binds without any interface setup on Linux) then forges a BYE
+# for that same dialog. Against the vulnerable default, the target must
+# tear the call down anyway.
+OUT=$("${SIPSIEGE}" run bye_spoof 127.0.0.1 --port "${MOCK_PORT}" \
+      --caller-ip 127.0.0.1 --spoofer-ip 127.0.0.2 --confirm "${ENGAGEMENT_ID}")
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: authorized bye_spoof was refused - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"dialog_established": true' || { echo "FAIL: bye_spoof never established a real dialog - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"hijack_bye_accepted": true' || { echo "FAIL: expected the vulnerable mock to accept the forged BYE - $OUT"; exit 1; }
+grep -q "BYE ACCEPTED_CROSS_SOURCE" "${MOCK_LOG}" || { echo "FAIL: mock log missing ACCEPTED_CROSS_SOURCE"; exit 1; }
+
+echo "== 26. run bye_spoof against a --reject-cross-source-bye mock - hijack rejected =="
+MOCK4_PORT=15073
+MOCK4_LOG="${WORKDIR}/mock_sbc_reject_cross_source.log"
+python3 "${REPO_ROOT}/tests/fixtures/mock_sbc.py" \
+  --host 127.0.0.1 --port "${MOCK4_PORT}" --threshold 100 --window 10 --log "${MOCK4_LOG}" \
+  --reject-cross-source-bye &
+MOCK4_PID=$!
+sleep 1
+OUT=$("${SIPSIEGE}" run bye_spoof 127.0.0.1 --port "${MOCK4_PORT}" \
+      --caller-ip 127.0.0.1 --spoofer-ip 127.0.0.2 --confirm "${ENGAGEMENT_ID}")
+kill "${MOCK4_PID}" 2>/dev/null || true
+wait "${MOCK4_PID}" 2>/dev/null || true
+echo "${OUT}" | grep -q "allowed:  True" || { echo "FAIL: authorized bye_spoof (secure mock) was refused - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"hijack_bye_accepted": false' || { echo "FAIL: expected the secure mock to reject the forged BYE - $OUT"; exit 1; }
+echo "${OUT}" | grep -q '"hijack_response_code": 403' || { echo "FAIL: expected a 403 rejection, - $OUT"; exit 1; }
+grep -q "BYE REJECTED_CROSS_SOURCE" "${MOCK4_LOG}" || { echo "FAIL: mock log missing REJECTED_CROSS_SOURCE"; exit 1; }
+
+echo "== 27. tamper the audit log and confirm status catches it =="
 AUDIT_FILE="${ENGAGEMENT_ID}.audit.jsonl"
 python3 - "${AUDIT_FILE}" <<'PYEOF'
 import json, sys

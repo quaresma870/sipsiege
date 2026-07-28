@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!-- bye_spoof_establish.xml
+     First half of bye_spoof: a single, real, cleanly-completed call
+     setup (INVITE -> 200 -> ACK) from the "legitimate" local source -
+     deliberately NOT torn down with a BYE here. bye_spoof.py parses this
+     run's own -message_file transcript afterward to harvest the real
+     Call-ID and the target-assigned To-tag, then hands them to a
+     SEPARATE sipp invocation (bye_spoof_hijack.xml) run from a
+     different real local source, to test whether the target validates
+     that an in-dialog BYE actually comes from a party to that dialog. -->
+
+<!-- IMPORTANT: [call_id] must be used verbatim as the entire Call-ID
+     header value, unprefixed and unsuffixed - see register_flood.xml
+     for the full rationale (SIPp correlates its own responses by this
+     value internally). A fixed, non-rotating identity is fine here
+     since this scenario only ever sends exactly one call. -->
+
+<scenario name="bye_spoof - establish one real call, no teardown">
+
+  <send retrans="500">
+    <![CDATA[
+
+      INVITE sip:byespoof@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:byespoofcaller@[local_ip]>;tag=byespoofcaller
+      To: <sip:byespoof@[remote_ip]:[remote_port]>
+      Call-ID: [call_id]
+      CSeq: 1 INVITE
+      Contact: <sip:byespoofcaller@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      User-Agent: SIP-Redteam-Toolkit-ByeSpoof
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=byespoofcaller 0 0 IN IP[local_ip_type] [local_ip]
+      s=-
+      c=IN IP[media_ip_type] [media_ip]
+      t=0 0
+      m=audio [media_port] RTP/AVP 0
+      a=rtpmap:0 PCMU/8000
+
+    ]]>
+  </send>
+
+  <!-- SIPp requires exactly one MANDATORY recv per open transaction -
+       see register_flood.xml for the full rationale. -->
+  <recv response="100" optional="true"></recv>
+  <recv response="200"></recv>
+
+  <send>
+    <![CDATA[
+
+      ACK sip:byespoof@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:byespoofcaller@[local_ip]>;tag=byespoofcaller
+      To: <sip:byespoof@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 1 ACK
+      Contact: <sip:byespoofcaller@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Deliberately no BYE here - the dialog is left open on the target
+       for bye_spoof_hijack.xml to attempt to tear down from a
+       different source. -->
+
+</scenario>

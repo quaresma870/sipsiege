@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.8.0
+
+- Added `bye_spoof` (see [ROADMAP.md](ROADMAP.md) v0.8.0): in-dialog
+  request forgery / session hijacking — tests whether the target
+  validates that a BYE for an existing dialog actually comes from a
+  party to that dialog, rather than accepting any request carrying a
+  matching Call-ID and To-tag regardless of source. `--caller-ip`
+  establishes one real call (never torn down); `--spoofer-ip` — a
+  genuinely different real local source — then forges a BYE for that
+  same dialog using the real Call-ID/To-tag harvested from the
+  establish call's own SIPp transcript.
+- **Real SIPp constraint discovered while building this**, confirmed
+  against a real mock before it ever reached the integration script
+  (the same practice that caught the `[authentication]` and
+  `SuccessfulCall(P)`-vs-`(C)` issues earlier): SIPp correlates an
+  incoming response to its own open call state by the Call-ID *it*
+  generated internally, not a literal comparison against the packet on
+  the wire. Since this scenario deliberately sends someone else's real
+  Call-ID (the entire point of testing a forged BYE), SIPp can never
+  recognize the target's response as belonging to that call -
+  `SuccessfulCall`/`FailedCall` in `stats.csv` always reads "failed"
+  regardless of what the target actually did. The target's real
+  response is still captured correctly in the hijack call's own
+  `-message_file` transcript; `bye_spoof.py` reads that directly
+  instead of trusting `stats.csv` for this one scenario.
+- `tests/fixtures/mock_sbc.py` now tracks which source IP established
+  each dialog and gained `--reject-cross-source-bye`: by default (the
+  vulnerable configuration) a BYE for a known dialog is accepted
+  regardless of source — unchanged from every prior version of this
+  mock, so `invite_flood`/`invite_no_ack`'s existing log-format
+  assertions still match exactly. With the flag, a cross-source BYE
+  gets 403 instead.
+- Extracted the real-local-IP bind check shared between
+  `register_rotating_source` and this scenario into `core/net.py`.
+  `bye_spoof` itself doesn't pre-validate `--caller-ip`/`--spoofer-ip`
+  are actually bound, matching `register_legit_mix`'s and
+  `register_rotating_source`'s existing explicit-IP behavior of
+  trusting the caller and letting `sipp`/the OS surface a real bind
+  failure naturally.
+- Integration test verifies both configurations for real: against the
+  default mock the forged BYE is accepted (`hijack_bye_accepted: true`,
+  logged `BYE ACCEPTED_CROSS_SOURCE`); against a `--reject-cross-
+  source-bye` mock it's rejected with a real 403
+  (`hijack_response_code: 403`, logged `BYE REJECTED_CROSS_SOURCE`).
+
 ## 0.7.0
 
 - Added `options_flood` (see [ROADMAP.md](ROADMAP.md) v0.7.0): method-scope

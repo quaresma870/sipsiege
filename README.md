@@ -74,6 +74,7 @@ PYTHONPATH=. python -m sipsiege.cli baseline 10.10.10.50
 | `digest_bruteforce` | active | Credential stuffing against SIP digest auth — one real REGISTER/401/REGISTER-with-digest cycle per extension/password pair from a wordlist (`--wordlist`, defaults to a small bundled one). Validates auth-failure throttling, a different defense than `pike`/`htable`'s raw request-rate limiting. Deliberately low-and-slow: one real `sipp` subprocess per credential pair, not one flood invocation. |
 | `user_enum` | baseline | One unauthenticated REGISTER per candidate extension in a range (`--ext-start`/`--ext-count`). Checks whether the target's response differs for real vs non-existent accounts — the recon step that precedes `digest_bruteforce` in a real attack chain. No `--confirm`. |
 | `options_flood` | active | Single real source, high-rate OPTIONS flood, rotating spoofed identity per request — same shape as `register_flood`. Validates whether rate limiting is wired into every SIP method's route, not just REGISTER/INVITE; a source already blocked over REGISTER may still flood freely over an unprotected method like OPTIONS. |
+| `bye_spoof` | active | Establishes one real call from `--caller-ip`, then attempts to tear it down with a forged BYE carrying that dialog's real Call-ID/To-tag, sent from a different real source (`--spoofer-ip`). Validates whether the target checks that in-dialog requests actually come from a party to the dialog, not just that the identifiers match. |
 
 Run `list-scenarios` for the same info from the CLI. See
 [ROADMAP.md](ROADMAP.md) for what's planned next — other attack
@@ -124,6 +125,7 @@ sipsiege/
 │   │   ├── audit_log.py              # hash-chained, append-only audit log
 │   │   ├── engagement.py             # scope gate + active-tier confirmation gate
 │   │   ├── rate_limit.py             # GlobalRateBudget - hard per-invocation request ceiling
+│   │   ├── net.py                    # is_bound_locally() - shared real-local-IP check
 │   │   └── sipp_runner.py            # subprocess wrapper around SIPp
 │   ├── scenarios/
 │   │   ├── base.py                   # BaseScenario - shared gate/run/summarize flow
@@ -136,7 +138,8 @@ sipsiege/
 │   │   ├── invite_no_ack.py
 │   │   ├── digest_bruteforce.py
 │   │   ├── user_enum.py
-│   │   └── options_flood.py
+│   │   ├── options_flood.py
+│   │   └── bye_spoof.py
 │   ├── sipp_xml/                     # SIPp scenario definitions, one per scenario
 │   └── templates/                    # digest_wordlist_default.csv - bundled default for digest_bruteforce
 ├── tests/

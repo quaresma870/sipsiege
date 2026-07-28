@@ -6,6 +6,7 @@ from sipsiege.core.audit_log import verify_log_integrity
 from sipsiege.core.engagement import Engagement
 from sipsiege.core.sipp_runner import SippResult
 from sipsiege.scenarios.baseline_probe import BaselineProbe
+from sipsiege.scenarios.bye_spoof import ByeSpoof
 from sipsiege.scenarios.digest_bruteforce import DigestBruteforce
 from sipsiege.scenarios.invite_flood import InviteFlood
 from sipsiege.scenarios.invite_no_ack import InviteNoAck
@@ -383,14 +384,14 @@ def test_rotating_source_local_ip_range_uses_real_bound_addresses(monkeypatch, e
 
 
 def test_rotating_source_local_ip_range_refused_when_not_bound(monkeypatch, engagement, tmp_path):
-    # _is_bound_locally mocked to always fail - deterministic regardless
+    # is_bound_locally mocked to always fail - deterministic regardless
     # of environment, unlike relying on a specific address range being
     # unbound (a real 192.0.2.0/30 probe during development turned out
     # to bind successfully in one sandboxed environment, which is
     # exactly the kind of environment-specific surprise this avoids).
     calls = []
     monkeypatch.setattr("sipsiege.scenarios.register_rotating_source.run_sipp", make_fake_run_sipp(calls))
-    monkeypatch.setattr("sipsiege.scenarios.register_rotating_source._is_bound_locally", lambda ip: False)
+    monkeypatch.setattr("sipsiege.scenarios.register_rotating_source.is_bound_locally", lambda ip: False)
 
     scenario = RegisterRotatingSource(engagement)
     result = scenario.run(
@@ -457,3 +458,150 @@ def test_legit_mix_runs_baseline_then_concurrent(monkeypatch, engagement, tmp_pa
     assert len(calls) == 3
     assert result.summary["baseline_legit_stats"]["successful_call"] == "9"
     assert result.summary["legit_stats_during_flood"]["successful_call"] == "9"
+
+
+# --- ByeSpoof (active tier - confirm required) ---
+
+def make_fake_bye_spoof_run_sipp(calls_log, establish_ok=True, hijack_status=200):
+    """Writes a fake -message_file transcript per invocation, distinguishing
+    the establish call from the hijack call by scenario_file name - bye_spoof
+    parses this transcript directly (not stats.csv - see bye_spoof.py's
+    module docstring for why), so that's what needs faking here."""
+    def _fake(**kwargs):
+        calls_log.append(kwargs)
+        results_dir = kwargs["results_dir"]
+        results_dir.mkdir(parents=True, exist_ok=True)
+        messages_log = results_dir / "messages.log"
+        if "establish" in str(kwargs["scenario_file"]):
+            if establish_ok:
+                messages_log.write_text(
+                    "UDP message sent (1 bytes):\n\n"
+                    "INVITE sip:byespoof@127.0.0.1 SIP/2.0\r\n"
+                    "Call-ID: fake-call-id-123@127.0.0.1\r\n\r\n"
+                    "UDP message received [1] bytes :\n\n"
+                    "SIP/2.0 200 OK\r\n"
+                    "To: <sip:byespoof@127.0.0.1>;tag=faketotag456\r\n"
+                    "Call-ID: fake-call-id-123@127.0.0.1\r\n\r\n"
+                )
+            else:
+                messages_log.write_text(
+                    "UDP message sent (1 bytes):\n\nINVITE sip:byespoof@127.0.0.1 SIP/2.0\r\n\r\n"
+                )
+        else:
+            if hijack_status is not None:
+                messages_log.write_text(
+                    "UDP message sent (1 bytes):\n\nBYE sip:byespoof@127.0.0.1 SIP/2.0\r\n\r\n"
+                    f"UDP message received [1] bytes :\n\nSIP/2.0 {hijack_status} X\r\n\r\n"
+                )
+            else:
+                messages_log.write_text(
+                    "UDP message sent (1 bytes):\n\nBYE sip:byespoof@127.0.0.1 SIP/2.0\r\n\r\n"
+                )
+        return SippResult(
+            return_code=0, stdout="", stderr="",
+            results_dir=results_dir, command=["sipp", "fake"],
+        )
+    return _fake
+
+
+def test_bye_spoof_refused_without_confirm(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.bye_spoof.run_sipp", make_fake_bye_spoof_run_sipp(calls))
+
+    scenario = ByeSpoof(engagement)
+    result = scenario.run(
+        target="10.10.10.50", caller_ip="10.0.0.11", spoofer_ip="10.0.0.12",
+        results_root=tmp_path / "results",
+    )
+
+    assert not result.allowed
+    assert "confirm" in result.refusal_reason.lower()
+    assert len(calls) == 0
+
+
+def test_bye_spoof_refused_without_both_ips(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.bye_spoof.run_sipp", make_fake_bye_spoof_run_sipp(calls))
+
+    scenario = ByeSpoof(engagement)
+    result = scenario.run(
+        target="10.10.10.50", caller_ip="10.0.0.11", confirm="test-eng-1",  # spoofer_ip missing
+        results_root=tmp_path / "results",
+    )
+
+    assert not result.allowed
+    assert "--caller-ip" in result.refusal_reason and "--spoofer-ip" in result.refusal_reason
+    assert len(calls) == 0
+
+
+def test_bye_spoof_refused_when_ips_match(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr("sipsiege.scenarios.bye_spoof.run_sipp", make_fake_bye_spoof_run_sipp(calls))
+
+    scenario = ByeSpoof(engagement)
+    result = scenario.run(
+        target="10.10.10.50", caller_ip="10.0.0.11", spoofer_ip="10.0.0.11", confirm="test-eng-1",
+        results_root=tmp_path / "results",
+    )
+
+    assert not result.allowed
+    assert "different" in result.refusal_reason.lower()
+    assert len(calls) == 0
+
+
+def test_bye_spoof_detects_vulnerable_target(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        "sipsiege.scenarios.bye_spoof.run_sipp",
+        make_fake_bye_spoof_run_sipp(calls, establish_ok=True, hijack_status=200),
+    )
+
+    scenario = ByeSpoof(engagement)
+    result = scenario.run(
+        target="10.10.10.50", caller_ip="10.0.0.11", spoofer_ip="10.0.0.12", confirm="test-eng-1",
+        results_root=tmp_path / "results",
+    )
+
+    assert result.allowed
+    assert len(calls) == 2  # establish, then hijack
+    assert result.summary["dialog_established"] is True
+    assert result.summary["hijack_attempted"] is True
+    assert result.summary["hijack_response_code"] == 200
+    assert result.summary["hijack_bye_accepted"] is True
+
+
+def test_bye_spoof_detects_secure_target(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        "sipsiege.scenarios.bye_spoof.run_sipp",
+        make_fake_bye_spoof_run_sipp(calls, establish_ok=True, hijack_status=403),
+    )
+
+    scenario = ByeSpoof(engagement)
+    result = scenario.run(
+        target="10.10.10.50", caller_ip="10.0.0.11", spoofer_ip="10.0.0.12", confirm="test-eng-1",
+        results_root=tmp_path / "results",
+    )
+
+    assert result.allowed
+    assert result.summary["hijack_response_code"] == 403
+    assert result.summary["hijack_bye_accepted"] is False
+
+
+def test_bye_spoof_no_dialog_established_skips_hijack(monkeypatch, engagement, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        "sipsiege.scenarios.bye_spoof.run_sipp",
+        make_fake_bye_spoof_run_sipp(calls, establish_ok=False),
+    )
+
+    scenario = ByeSpoof(engagement)
+    result = scenario.run(
+        target="10.10.10.50", caller_ip="10.0.0.11", spoofer_ip="10.0.0.12", confirm="test-eng-1",
+        results_root=tmp_path / "results",
+    )
+
+    assert result.allowed  # authorized and ran - just found no dialog to hijack
+    assert len(calls) == 1  # establish only, hijack never attempted
+    assert result.summary["dialog_established"] is False
+    assert result.summary["hijack_attempted"] is False

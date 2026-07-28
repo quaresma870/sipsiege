@@ -31,23 +31,14 @@ Tier: active - requires --confirm <engagement_id>.
 from __future__ import annotations
 
 import ipaddress
-import socket
 from pathlib import Path
 
 from ..core.engagement import EngagementRefused
+from ..core.net import is_bound_locally
 from ..core.sipp_runner import run_sipp
 from .base import BaseScenario, ScenarioResult
 
 SIPP_XML_DIR = Path(__file__).parent.parent / "sipp_xml"
-
-
-def _is_bound_locally(ip: str) -> bool:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.bind((ip, 0))
-        return True
-    except OSError:
-        return False
 
 
 def _bound_ips_in_range(cidr: str) -> tuple[list[str], list[str]]:
@@ -55,7 +46,7 @@ def _bound_ips_in_range(cidr: str) -> tuple[list[str], list[str]]:
     order. Doesn't configure or touch any interface - only checks."""
     network = ipaddress.ip_network(cidr, strict=False)
     candidates = [str(ip) for ip in network.hosts()]
-    bound = [ip for ip in candidates if _is_bound_locally(ip)]
+    bound = [ip for ip in candidates if is_bound_locally(ip)]
     unbound = [ip for ip in candidates if ip not in bound]
     return bound, unbound
 
