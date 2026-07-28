@@ -112,41 +112,62 @@ before picking any of these up.
   configuration guidance (modparams, route snippets) for defending
   against every scenario this toolkit ships, one section per scenario.
 
+### v0.8.0
+- `bye_spoof` — in-dialog request forgery / session hijacking. Tests
+  something none of the prior scenarios touch: whether the target
+  validates that a BYE for an existing dialog actually comes from a
+  party to that dialog, rather than accepting any request that happens
+  to carry a matching Call-ID and To-tag regardless of source. Two real
+  local IPs, doing two sequential things: `--caller-ip` establishes one
+  real call (INVITE → 200 → ACK, deliberately never torn down);
+  `--spoofer-ip` — a genuinely different real local source, never the
+  network-layer-spoofed source the guardrails forbid — then sends a
+  forged BYE for that same dialog, using the real Call-ID/To-tag
+  harvested from the establish call's own SIPp transcript.
+  Turned out to need its own SIPp-only discovery, confirmed against a
+  real mock before it ever reached the integration script (same
+  practice that caught the `[authentication]` and `SuccessfulCall(P)`-
+  vs-`(C)` issues earlier): SIPp correlates an incoming response to its
+  own open call state by the Call-ID *it* generated internally, not a
+  literal comparison against the packet - so a scenario that
+  deliberately sends someone else's real Call-ID (the whole point here)
+  can never have its own response recognized as a match. SIPp's
+  SuccessfulCall/FailedCall split is unusable for this one scenario;
+  `bye_spoof.py` reads the hijack call's actual response status
+  directly out of its own `-message_file` transcript instead.
+  `tests/fixtures/mock_sbc.py` now tracks which source IP established
+  each dialog and gained `--reject-cross-source-bye`: by default (the
+  vulnerable configuration) a BYE for a known dialog is accepted
+  regardless of source, unchanged from every prior version of this mock
+  so `invite_flood`/`invite_no_ack`'s existing log-format assertions
+  still match exactly; with the flag, a cross-source BYE gets 403
+  instead. Extracted the real-local-IP bind check shared with
+  `register_rotating_source` into `core/net.py` while doing this
+  (`bye_spoof` itself doesn't pre-validate its two IPs, matching
+  `register_legit_mix`/`register_rotating_source`'s existing explicit-
+  IP behavior of trusting the caller and letting `sipp`/the OS surface
+  a real bind failure naturally).
+
 ## Next — attack scenario coverage
 
 REGISTER flooding, INVITE flooding (clean and half-open), digest
-credential stuffing, and extension enumeration are the patterns covered
-so far. The items below are each grounded in a documented, commonly-seen
-SIP/VoIP attack technique — prioritized by how often they show up against
-real internet-facing SBCs, not by implementation difficulty.
+credential stuffing, extension enumeration, method-scope bypass, and
+in-dialog request forgery are the patterns covered so far. The items
+below are each grounded in a documented, commonly-seen SIP/VoIP attack
+technique — prioritized by how often they show up against real
+internet-facing SBCs, not by implementation difficulty.
 
-### 1. `bye_spoof` — in-dialog request forgery / session hijacking
-Tests something none of the current scenarios touch: whether the SBC
-validates that a BYE/CANCEL/re-INVITE for an existing dialog actually
-comes from a party to that dialog (correct topology hiding, tag/Call-ID
-handling) rather than accepting any request that happens to guess or
-replay a Call-ID + tags. A legitimate two-party call is set up first (via
-`register_legit_mix`'s legit stream or a new minimal call fixture), then
-a forged BYE is sent from a third source using guessed/observed dialog
-identifiers. Genuinely harder than everything shipped so far (needs real
-dialog-state plumbing SIPp doesn't make trivial, and the attack
-precondition — obtaining a real Call-ID/tag pair — usually requires the
-attacker to have already compromised a leg of the call or be on-path, so
-it's less of a pure internet-exposure risk than the others). First in
-this list mainly by elimination; worth a design spike before committing
-to it, not a straightforward next build.
-
-### 2. RTP/media-plane flood
+### 1. RTP/media-plane flood
 Everything shipped and planned above is signaling-plane (SIP itself).
 After a real or simulated call setup, a separate attack surface exists at
 the negotiated RTP port — garbage UDP volume there tests the SBC/RTP
 proxy's media-plane rate limiting independently of `pike`/`htable`, which
 only see SIP signaling. Needs a minimal RTP packet generator (or driving
 `sipp`'s own RTP echo capability) bound to the port negotiated by a real
-completed call. Bigger scope than the SIP-only scenarios above — sequence
-after 1 lands.
+completed call. Bigger scope than the SIP-only scenarios shipped so far -
+worth a design spike before committing to an implementation approach.
 
-### 3. Malformed-message parser stress (`sanity` module / RFC 4475 SIP Torture Test)
+### 2. Malformed-message parser stress (`sanity` module / RFC 4475 SIP Torture Test)
 Every scenario shipped so far sends well-formed SIP; nothing tests
 whether the target's `sanity_check()` / core parser (max header count,
 max message length, malformed Request-URI, mismatched Content-Length,
@@ -160,7 +181,7 @@ malformed message rather than crashing, hanging, or forwarding it
 somewhere it shouldn't — needs a different, per-message pass/fail
 model than the binary 200/not-200 pattern every other scenario uses.
 
-### 4. TCP/TLS connection-table exhaustion (`tcp_max_connections`)
+### 3. TCP/TLS connection-table exhaustion (`tcp_max_connections`)
 Every current scenario is UDP, stateless per request. A real Kamailio
 deployment listening on TCP/TLS instead has (or should have) a
 `tcp_max_connections`/`tls_max_connections` ceiling — a source that
@@ -171,7 +192,7 @@ raw TCP/TLS connections open deliberately, not just sending fast) —
 worth a design spike on how to do this with SIPp before committing to
 an implementation approach.
 
-### 5. Trusted-header IP spoofing (`real_ip_header` / reverse-proxy trust)
+### 4. Trusted-header IP spoofing (`real_ip_header` / reverse-proxy trust)
 A misconfiguration class, not a volume attack: when Kamailio sits behind
 a load balancer or SBC and is configured to trust a client-supplied
 header (e.g. `X-Real-IP`) for its own per-source-IP accounting instead

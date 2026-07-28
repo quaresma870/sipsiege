@@ -301,6 +301,64 @@ comparing call volume the target actually processed against your
 configured `pike`/`ratelimit` threshold — it should trip exactly like
 `register_flood` does at the same rate, not sail through unaffected.
 
+## `bye_spoof`
+
+None of the defenses above touch this: `pike`/`htable`/`ratelimit` are
+all about *how much* traffic a source sends, and `bye_spoof` isn't a
+volume attack at all — it's one forged in-dialog request from a source
+that was never part of the call. The relevant defense is Kamailio's
+`dialog` module tracking which leg a request actually belongs to, plus
+strict `loose_route()` enforcement, rather than anything rate-based:
+
+```
+loadmodule "dialog.so"
+modparam("dialog", "dlg_match_mode", 1)   # match dialogs on tag+Call-ID,
+                                           # not just Call-ID alone
+
+route[WITHINDLG] {
+    if (!has_totag()) return;
+
+    # loose_route() fails closed for a request that doesn't match a
+    # route set Kamailio itself inserted via Record-Route on the
+    # original INVITE - a guessed/replayed Call-ID+tags pair alone
+    # isn't enough if the request didn't actually traverse the path
+    # Kamailio expects for that dialog.
+    if (!loose_route()) {
+        sl_send_reply("404", "Not Found");
+        exit;
+    }
+
+    if (!dlg_matches_source($si)) {
+        # dlg_matches_source() is illustrative, not a real modparam -
+        # the actual mechanism is comparing the request's source against
+        # what the dialog module (with dlg_match_mode set to track this)
+        # or your own htable-based bookkeeping recorded for this dialog's
+        # legs when the INVITE was answered. The point is: validate BEFORE
+        # forwarding, not after.
+        xlog("L_ALERT", "ALERT: in-dialog $rm for $ci from unexpected source $si\n");
+        sl_send_reply("403", "Forbidden");
+        exit;
+    }
+    ...
+}
+```
+
+The `dlg_matches_source()` call above is illustrative — Kamailio's
+`dialog` module doesn't ship a modparam of exactly that name; the real
+implementation is either your own `htable` recording each leg's source
+IP when the dialog is confirmed (the same approach
+`tests/fixtures/mock_sbc.py`'s `--reject-cross-source-bye` takes) or a
+topology-hiding module (`topoh`) that replaces the Call-ID/tags/Route
+set the far end sees with Kamailio-generated opaque values in the first
+place — an attacker who never saw the real dialog identifiers can't
+forge a request carrying them at all, which closes this gap
+structurally rather than by checking source IPs after the fact.
+
+Validate with `bye_spoof --caller-ip <ip1> --spoofer-ip <ip2> --confirm
+<id>` — `hijack_bye_accepted` should read `false` once source
+validation (or topology hiding) is actually wired in, versus `true`
+against an unpatched config.
+
 ## Coming next
 
 Three more Kamailio defense mechanisms are tracked as future scenarios

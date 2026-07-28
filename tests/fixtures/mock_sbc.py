@@ -51,6 +51,19 @@ Behavior:
   - A blocked source recovers once enough time passes that its
     request count within the trailing window drops back under
     threshold.
+  - Tracks which source IP established each dialog (the source of the
+    INVITE that got a 200) in `established_dialogs`. By default (the
+    vulnerable configuration bye_spoof is built to catch) a BYE for a
+    known dialog is accepted regardless of whether it comes from that
+    same source - unchanged from every prior version of this mock, so
+    invite_flood/invite_no_ack's existing log-format assertions ("...
+    BYE" with nothing after) still match exactly. With
+    --reject-cross-source-bye, a BYE whose source doesn't match the
+    dialog's established source gets 403 instead - the secure
+    configuration. Either way, a cross-source BYE (accepted or
+    rejected) is logged with an explicit ACCEPTED_CROSS_SOURCE /
+    REJECTED_CROSS_SOURCE tag so it's never confused with a normal,
+    same-source teardown in the log.
 
 Usage:
   python mock_sbc.py --host 127.0.0.1 --port 5070 --threshold 15 --window 2
@@ -181,6 +194,13 @@ def extract_from_username(request: bytes) -> str:
     return uri_match.group(1).decode(errors="replace") if uri_match else ""
 
 
+def extract_call_id(request: bytes) -> str:
+    """Used to key established_dialogs (see serve()'s docstring) - the
+    same Call-ID value a BYE for that dialog must carry."""
+    m = CALLID_RE.search(request)
+    return m.group(1).strip().decode(errors="replace") if m else ""
+
+
 def build_401_challenge(request: bytes) -> bytes:
     """Fresh WWW-Authenticate challenge, no qop - so the [authentication]
     keyword's own digest computation (and _digest_response_matches'
@@ -246,14 +266,16 @@ class SlidingWindowLimiter:
 def serve(
     host: str, port: int, threshold: int, window: float,
     log_path: str | None = None, extension_oracle: bool = False,
-    limit_options: bool = False,
+    limit_options: bool = False, reject_cross_source_bye: bool = False,
 ):
     limiter = SlidingWindowLimiter(threshold=threshold, window_seconds=window)
+    established_dialogs: dict[str, str] = {}  # call_id -> source IP that set it up
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     print(f"mock_sbc listening on {host}:{port} "
           f"(threshold={threshold} reqs / {window}s window, "
-          f"extension_oracle={extension_oracle}, limit_options={limit_options})")
+          f"extension_oracle={extension_oracle}, limit_options={limit_options}, "
+          f"reject_cross_source_bye={reject_cross_source_bye})")
 
     logf = open(log_path, "a") if log_path else None
     allowed_count = 0
@@ -313,6 +335,7 @@ def serve(
                     resp = build_invite_200_ok(data)
                     sock.sendto(resp, addr)
                     allowed_count += 1
+                    established_dialogs[extract_call_id(data)] = source_ip
                 else:
                     dropped_count += 1  # simulate pike-style silent drop
                 if logf:
@@ -324,11 +347,30 @@ def serve(
                     logf.flush()
             elif method == b"BYE":
                 # Tearing down a call that already got through isn't
-                # what's being rate-limited here - always ack it.
-                sock.sendto(build_200_ok(data), addr)
-                if logf:
-                    logf.write(f"{time.time()} {source_ip} BYE\n")
-                    logf.flush()
+                # what's being rate-limited here - never counted against
+                # the limiter. But bye_spoof cares whether the source
+                # tearing it down was ever actually part of the dialog.
+                established_source = established_dialogs.get(extract_call_id(data))
+                cross_source = established_source is not None and established_source != source_ip
+                if reject_cross_source_bye and cross_source:
+                    sock.sendto(build_403_forbidden(data), addr)
+                    if logf:
+                        logf.write(f"{time.time()} {source_ip} BYE REJECTED_CROSS_SOURCE\n")
+                        logf.flush()
+                else:
+                    sock.sendto(build_200_ok(data), addr)
+                    if logf:
+                        if cross_source:
+                            logf.write(f"{time.time()} {source_ip} BYE ACCEPTED_CROSS_SOURCE\n")
+                        else:
+                            # Unchanged format from every prior version of
+                            # this mock - invite_flood/invite_no_ack's own
+                            # integration-test assertions grep for exactly
+                            # this line shape (" BYE$"), never hit by
+                            # bye_spoof since they never send a
+                            # cross-source teardown.
+                            logf.write(f"{time.time()} {source_ip} BYE\n")
+                        logf.flush()
             elif method == b"OPTIONS":
                 if limit_options:
                     # Secure configuration: OPTIONS shares the same
@@ -379,10 +421,15 @@ def main():
                     help="OPTIONS shares the same per-IP limiter as REGISTER/INVITE - the "
                          "secure configuration. Default (off) leaves OPTIONS uncounted and "
                          "unconditionally answered, the method-scope gap options_flood tests")
+    p.add_argument("--reject-cross-source-bye", action="store_true",
+                    help="a BYE for a known dialog whose source doesn't match the source "
+                         "that established it gets 403 instead of being torn down - the "
+                         "secure configuration. Default (off) accepts it regardless, the "
+                         "dialog-hijacking gap bye_spoof tests")
     args = p.parse_args()
     serve(
         args.host, args.port, args.threshold, args.window, args.log,
-        args.extension_oracle, args.limit_options,
+        args.extension_oracle, args.limit_options, args.reject_cross_source_bye,
     )
 
 
